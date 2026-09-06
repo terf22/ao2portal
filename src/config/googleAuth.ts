@@ -15,9 +15,31 @@ import firebaseConfigJson from '../../firebase-applet-config.json';
 
 export const firebaseConfig = firebaseConfigJson;
 
-export const GOOGLE_CLIENT_ID =
-  firebaseConfig.oAuthClientId ||
-  '151352064517-6m84egpp5mjc24psh011knn430cgajc9.apps.googleusercontent.com';
+export function getGoogleClientId(): string {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('ao2_custom_google_client_id');
+    if (custom && custom.trim()) {
+      return custom.trim();
+    }
+  }
+  return (
+    (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
+    firebaseConfig.oAuthClientId ||
+    '151352064517-6m84egpp5mjc24psh011knn430cgajc9.apps.googleusercontent.com'
+  );
+}
+
+export function setCustomGoogleClientId(clientId: string | null): void {
+  if (typeof window !== 'undefined') {
+    if (clientId && clientId.trim()) {
+      localStorage.setItem('ao2_custom_google_client_id', clientId.trim());
+    } else {
+      localStorage.removeItem('ao2_custom_google_client_id');
+    }
+  }
+}
+
+export const GOOGLE_CLIENT_ID = getGoogleClientId();
 
 // Initialize Firebase App singleton safely
 export const firebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);

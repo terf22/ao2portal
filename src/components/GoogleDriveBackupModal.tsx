@@ -25,7 +25,7 @@ import {
 } from '../services/googleDriveService';
 import {
   signInWithGooglePopup,
-  GOOGLE_CLIENT_ID,
+  getGoogleClientId,
 } from '../config/googleAuth';
 import { db, addAuditLog } from '../db/dexie';
 import { SchoolProfile, UserSession } from '../types';
@@ -115,7 +115,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
     if (typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
       try {
         const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
+          client_id: getGoogleClientId(),
           scope: 'https://www.googleapis.com/auth/drive.file email profile openid',
           callback: async (res) => {
             setIsConnecting(false);
