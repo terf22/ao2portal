@@ -1,0 +1,8 @@
+{
+  "name": "Administrative Officer II (AOII) Portal",
+  "description": "DepEd Zamboanga Division Human Resource and School Administrative management system with offline-first Form 48 DTR, NOSI Engine, customizable Salary Tranche upload/template, Service Records, PIMS, and secure data sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

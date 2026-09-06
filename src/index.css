@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary-deped: #1e3a8a;
+    --accent-gold: #d97706;
+  }
+}
+
+/* Custom fonts styling */
+.font-cinzel {
+  font-family: 'Cinzel', serif;
+}
+
+.font-serif-doc {
+  font-family: 'Merriweather', Georgia, serif;
+}
+
+.font-mono-time {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Form 48 standard dimensions: 3.5" wide by 8.5" high (88.9mm x 215.9mm) */
+.form48-card {
+  width: 3.5in;
+  min-height: 8.5in;
+  max-height: 8.5in;
+  box-sizing: border-box;
+}
+
+/* Print Specific Rules */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Target print container */
+  .printable-area {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+  }
+
+  /* Paper sizes */
+  @page {
+    margin: 0.2in;
+    size: auto;
+  }
+
+  .print-page-break {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .print-avoid-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}
+
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}
