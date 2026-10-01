@@ -55,6 +55,38 @@ export function saveStoredSession(session: UserSession): void {
 }
 
 /**
+ * Update current user session and persist to IndexedDB
+ */
+export async function updateUserSession(partial: Partial<UserSession>): Promise<UserSession | null> {
+  const current = getStoredSession();
+  if (!current) return null;
+  const updated: UserSession = { ...current, ...partial };
+  saveStoredSession(updated);
+
+  try {
+    const allUsers = await db.users.toArray();
+    const existing = allUsers.find(
+      (u) =>
+        (updated.userId && u.id === updated.userId) ||
+        u.username.toLowerCase() === updated.username.toLowerCase()
+    );
+    if (existing) {
+      const updatedUser: User = {
+        ...existing,
+        fullName: updated.fullName ? updated.fullName.trim() : existing.fullName,
+        email: updated.email !== undefined ? updated.email : existing.email,
+        schoolStation: updated.schoolLocation !== undefined ? updated.schoolLocation : existing.schoolStation,
+      };
+      await db.users.put(updatedUser);
+    }
+  } catch (err) {
+    console.warn('Could not update user record in IndexedDB:', err);
+  }
+
+  return updated;
+}
+
+/**
  * Clear user session (Sign Out)
  */
 export async function clearStoredSession(actorName = 'User'): Promise<void> {

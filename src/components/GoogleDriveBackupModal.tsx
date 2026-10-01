@@ -90,7 +90,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
 
     // Primary: Firebase Auth Popup Flow
     try {
-      const { user, accessToken: token } = await signInWithGooglePopup();
+      const { user, accessToken: token } = await signInWithGooglePopup(true);
       if (token) {
         setAccessToken(token);
         setCachedGoogleToken(token);

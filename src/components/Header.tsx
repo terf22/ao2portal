@@ -30,6 +30,7 @@ interface HeaderProps {
   onToggleMobileMenu?: () => void;
   onOpenGoogleDriveModal?: () => void;
   onSignOut?: () => void;
+  onUpdateProfile?: (updated: Partial<UserSession>) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -42,12 +43,40 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileMenu,
   onOpenGoogleDriveModal,
   onSignOut,
+  onUpdateProfile,
 }) => {
   const { syncStatus, lastSyncTime, pendingCount, triggerManualSync, isOnline } = useOnlineSync();
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [oauthClientId, setOauthClientId] = useState('');
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileFullName, setProfileFullName] = useState(currentUser.fullName || '');
+  const [profileEmail, setProfileEmail] = useState(currentUser.email || '');
+  const [profileSavedMsg, setProfileSavedMsg] = useState<string | null>(null);
+
+  const handleOpenProfileModal = () => {
+    setProfileFullName(currentUser.fullName || '');
+    setProfileEmail(currentUser.email || '');
+    setShowProfileModal(true);
+  };
+
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (onUpdateProfile) {
+      onUpdateProfile({
+        fullName: profileFullName.trim() || currentUser.username,
+        email: profileEmail.trim(),
+      });
+      setProfileSavedMsg('Profile updated successfully!');
+      setTimeout(() => {
+        setProfileSavedMsg(null);
+        setShowProfileModal(false);
+      }, 1200);
+    } else {
+      setShowProfileModal(false);
+    }
+  };
   const [oauthDomain, setOauthDomain] = useState('deped.gov.ph');
   const [oauthSaved, setOauthSaved] = useState(false);
 
@@ -260,40 +289,47 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* User Profile Info & Avatar */}
             <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:border-l sm:border-slate-200">
-              <div className="text-right hidden sm:block">
-                <p className="text-xs sm:text-sm font-bold text-[#1e3a8a] leading-tight truncate max-w-[140px] md:max-w-[180px]">
-                  {currentUser.fullName || currentUser.username}
-                </p>
-                <div className="flex items-center justify-end gap-1 mt-0.5">
-                  <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase tracking-tight bg-blue-100 text-blue-900 border border-blue-200">
-                    {currentUser.role}
-                  </span>
-                  {currentUser.isGoogleLinked && (
-                    <span
-                      className="inline-block px-1 py-0.2 rounded text-[8px] font-bold bg-emerald-100 text-emerald-800"
-                      title="Linked to Google Account"
-                    >
-                      Google
+              <button
+                type="button"
+                onClick={handleOpenProfileModal}
+                className="flex items-center gap-2 sm:gap-3 text-left group p-1 -m-1 rounded-xl hover:bg-blue-50/70 transition cursor-pointer"
+                title="Click to edit Complete Name & Profile"
+              >
+                <div className="text-right hidden sm:block">
+                  <p className="text-xs sm:text-sm font-bold text-[#1e3a8a] group-hover:text-blue-900 leading-tight truncate max-w-[140px] md:max-w-[180px]">
+                    {currentUser.fullName || currentUser.username}
+                  </p>
+                  <div className="flex items-center justify-end gap-1 mt-0.5">
+                    <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase tracking-tight bg-blue-100 text-blue-900 border border-blue-200">
+                      {currentUser.role}
                     </span>
+                    {currentUser.isGoogleLinked && (
+                      <span
+                        className="inline-block px-1 py-0.2 rounded text-[8px] font-bold bg-emerald-100 text-emerald-800"
+                        title="Linked to Google Account"
+                      >
+                        Google
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Avatar */}
+                <div className="w-9 h-9 rounded-full bg-slate-200 border-2 border-slate-100 overflow-hidden shadow-xs shrink-0 relative group-hover:ring-2 group-hover:ring-blue-600 transition">
+                  {currentUser.avatarUrl ? (
+                    <img
+                      src={currentUser.avatarUrl}
+                      alt={currentUser.fullName || currentUser.username}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-blue-700 to-indigo-900 flex items-center justify-center font-bold text-xs text-white uppercase">
+                      {(currentUser.fullName || currentUser.username).slice(0, 2)}
+                    </div>
                   )}
                 </div>
-              </div>
-
-              {/* Avatar */}
-              <div className="w-9 h-9 rounded-full bg-slate-200 border-2 border-slate-100 overflow-hidden shadow-xs shrink-0 relative">
-                {currentUser.avatarUrl ? (
-                  <img
-                    src={currentUser.avatarUrl}
-                    alt={currentUser.fullName || currentUser.username}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-blue-700 to-indigo-900 flex items-center justify-center font-bold text-xs text-white uppercase">
-                    {(currentUser.fullName || currentUser.username).slice(0, 2)}
-                  </div>
-                )}
-              </div>
+              </button>
 
               {/* Sign Out Action */}
               {onSignOut && (
@@ -408,6 +444,126 @@ export const Header: React.FC<HeaderProps> = ({
                   ) : (
                     'Save Configuration'
                   )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Profile & Complete Name Modal */}
+      {showProfileModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden text-slate-900">
+            <div className="bg-[#1e3a8a] text-white p-5 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-amber-400" />
+                  User Profile &amp; Signatory Settings
+                </h3>
+                <p className="text-xs text-blue-200 mt-0.5">
+                  Update your official complete name and portal credentials
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowProfileModal(false)}
+                className="text-white/80 hover:text-white text-lg font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="p-6 space-y-4 text-xs">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  Complete Official Full Name
+                </label>
+                <input
+                  type="text"
+                  value={profileFullName}
+                  onChange={(e) => setProfileFullName(e.target.value)}
+                  placeholder="e.g. MARIA TERESA F. SANTOS, AO II"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-blue-800 outline-none uppercase"
+                  required
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  This official name will appear on the Service Record <strong>&ldquo;Prepared by:&rdquo;</strong> signatory line, DTR reports, and system certifications instead of your login username.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    System Username
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={currentUser.username}
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-0.5">Login account ID</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Assigned Role
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={currentUser.role}
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 font-semibold"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-0.5">Role clearance</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  DepEd Email Address
+                </label>
+                <input
+                  type="email"
+                  value={profileEmail}
+                  onChange={(e) => setProfileEmail(e.target.value)}
+                  placeholder="name@deped.gov.ph"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 focus:ring-2 focus:ring-blue-800 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  School Station / Office
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={schoolProfile.schoolName || currentUser.schoolLocation || 'Station Configured'}
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-600 font-medium"
+                />
+              </div>
+
+              {profileSavedMsg && (
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>{profileSavedMsg}</span>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs text-slate-600 hover:bg-slate-100 font-medium transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-[#1e3a8a] hover:bg-blue-900 text-white shadow-md transition"
+                >
+                  Save Profile
                 </button>
               </div>
             </form>

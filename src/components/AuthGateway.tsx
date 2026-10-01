@@ -167,9 +167,9 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
     setSuccessMsg(null);
     setIsLoading(true);
 
-    // Primary: Firebase Auth Popup Flow
+    // Primary: Firebase Auth Popup Flow (Standard non-sensitive scopes: email, profile)
     try {
-      const { user, accessToken } = await signInWithGooglePopup();
+      const { user, accessToken } = await signInWithGooglePopup(false);
       const profile: GoogleUserInfo = {
         sub: user.uid,
         name: user.displayName || user.email || 'DepEd Google User',
@@ -183,7 +183,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
         regRole || 'AO II',
         defaultSchoolName
       );
-      setSuccessMsg(`Authenticated via Google (${profile.email}). Connected to Google Drive!`);
+      setSuccessMsg(`Authenticated via Google (${profile.email}). Welcome!`);
       setTimeout(() => {
         onLoginSuccess(session);
       }, 400);
@@ -197,12 +197,12 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
       console.warn('Firebase popup flow fallback to GSI token client:', popupErr);
     }
 
-    // Secondary / Fallback: Google Identity Services (GSI) Token Client
+    // Secondary / Fallback: Google Identity Services (GSI) Token Client (Standard non-sensitive scopes)
     if (typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
       try {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: getGoogleClientId(),
-          scope: 'https://www.googleapis.com/auth/drive.file email profile openid',
+          scope: 'email profile openid',
           callback: async (tokenResponse) => {
             if (tokenResponse.error) {
               setIsLoading(false);
@@ -393,8 +393,8 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
 
             <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
               <span className="flex items-center gap-1.5">
-                <FolderSync className="w-3.5 h-3.5 text-blue-600" />
-                <span>Enables 1-click Google Drive database backup</span>
+                <Shield className="w-3.5 h-3.5 text-blue-600" />
+                <span>Single Sign-On with Google (No verification required)</span>
               </span>
               <button
                 type="button"
@@ -402,34 +402,29 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                 className="text-blue-700 hover:underline flex items-center gap-0.5 font-medium"
               >
                 <HelpCircle className="w-3 h-3" />
-                <span>Info</span>
+                <span>Publish Guide</span>
               </button>
             </div>
 
             {showGoogleHelp && (
               <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-950 text-[11px] leading-relaxed space-y-2.5 shadow-sm">
                 <div>
-                  <p className="font-bold text-blue-900 text-xs">Google Account & Drive Sync</p>
-                  <p className="text-slate-600 mt-0.5">
-                    Connecting your Google account allows automatic cloud backups directly to a private folder in your Google Drive.
+                  <p className="font-bold text-blue-900 text-xs">How to Allow Anyone to Sign In via Google</p>
+                  <p className="text-slate-600 mt-1">
+                    To make Google Sign-In accessible to any user without adding them to a &ldquo;Test Users&rdquo; list:
                   </p>
+                  <ol className="list-decimal list-inside text-slate-700 space-y-1 mt-1.5 pl-1">
+                    <li>Go to <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noreferrer" className="text-blue-700 font-bold underline">Google Cloud Console &gt; OAuth consent screen</a>.</li>
+                    <li>Under <strong>Publishing status</strong>, click the <strong>&ldquo;PUBLISH APP&rdquo;</strong> button.</li>
+                    <li>Confirm the dialog. The status will become <strong>&ldquo;In Production&rdquo;</strong>.</li>
+                    <li>Because this portal only uses standard login scopes (email &amp; profile), <strong>no verification or security review is required by Google</strong>! Anyone with any Google account can now log in immediately.</li>
+                  </ol>
                 </div>
 
                 <div className="p-2.5 rounded-lg bg-white border border-blue-100 text-slate-700 space-y-1.5">
-                  <p className="font-semibold text-blue-900 flex items-center justify-between">
-                    <span>Self-Hosted & GitHub Pages Setup</span>
-                  </p>
+                  <p className="font-semibold text-blue-900">Custom OAuth Client ID (Optional)</p>
                   <p className="text-[10px] text-slate-500">
-                    If you see <em>&ldquo;Error 401: invalid_client&rdquo;</em> on GitHub Pages, enter your own Google OAuth Client ID created from{' '}
-                    <a
-                      href="https://console.cloud.google.com/apis/credentials"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 underline font-medium"
-                    >
-                      Google Cloud Console
-                    </a>{' '}
-                    with your domain added to Authorized Origins:
+                    If running on a custom domain or personal project, you can provide your own Client ID:
                   </p>
 
                   <div className="flex gap-1.5 pt-1">
@@ -463,13 +458,6 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                   {clientIdSavedMsg && (
                     <p className="text-[10px] text-emerald-600 font-medium">{clientIdSavedMsg}</p>
                   )}
-                </div>
-
-                <div className="pt-0.5 border-t border-blue-200/60 text-slate-600">
-                  <p className="font-medium text-slate-800">No Google Cloud setup? No problem!</p>
-                  <p>
-                    You can immediately sign in using the <strong>local credentials</strong> below or click the <strong>Register</strong> tab. You still get complete local offline storage and file backups.
-                  </p>
                 </div>
               </div>
             )}

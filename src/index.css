@@ -30,16 +30,52 @@
 
 /* Print Specific Rules */
 @media print {
+  /* Eliminate any scrollbars and scrolling artifacts from print / PDF export */
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+
+  ::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+    background: transparent !important;
+  }
+
+  html,
   body {
     background: #ffffff !important;
     color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  .no-print {
+  #root,
+  #root > div,
+  main {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+  }
+
+  .no-print,
+  aside,
+  header,
+  nav {
     display: none !important;
   }
 
@@ -47,21 +83,37 @@
     display: block !important;
   }
 
+  /* Force all table wrappers and containers to never scroll or clip during print */
+  .overflow-x-auto,
+  .overflow-y-auto,
+  .overflow-auto,
+  .printable-area,
+  .printable-area * {
+    overflow: visible !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+  }
+
   /* Target print container */
   .printable-area {
     display: block !important;
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    background: #ffffff;
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    overflow: visible !important;
   }
 
-  /* Paper sizes */
+  /* Official DepEd print paper margins */
   @page {
-    margin: 0.2in;
+    margin: 0.25in 0.3in 0.25in 0.3in;
     size: auto;
   }
 
@@ -71,6 +123,17 @@
   }
 
   .print-avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .service-record-table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  .service-record-table tr {
     page-break-inside: avoid;
     break-inside: avoid;
   }

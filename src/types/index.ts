@@ -77,21 +77,28 @@ export interface LeaveLedgerEntry {
 
 export interface ServiceRecordBlock {
   id: string;
-  from: string; // YYYY-MM-DD
-  to: string; // YYYY-MM-DD or "PRESENT"
-  designation: string; // e.g., "Teacher I", "Teacher II"
-  status: string; // "Permanent", "Substitute"
-  monthlySalary: number; // PHP
+  from: string; // MM/DD/YYYY or YYYY-MM-DD
+  to: string; // MM/DD/YYYY, YYYY-MM-DD or "PRESENT"
+  designation: string; // e.g., "TEACHER I", "TEACHER II"
+  status: string; // e.g. "PERM.", "SUBST."
+  monthlySalary: number | string; // PHP
+  salaryGrade?: number | string; // SG e.g., 11
+  step?: number | string; // S e.g., 1, 2, 3
+  schoolAssignment?: string; // e.g. "MANGUSU IS"
+  remittingAgency?: string; // e.g. "ZAMBOANGA CITY HIGH SCHOOL - 1000030811"
   station: string; // e.g., "Zamboanga City High School - Main"
-  branch: string; // e.g., "National"
-  lwop: string; // "None" or number of days
+  branch: string; // e.g., "NAT.", "National"
+  lwopFrom?: string;
+  lwopTo?: string;
+  lwop: string; // "NONE" or number of days
   separationDateCause: string; // e.g., "Promotion", "N/A"
+  separationDate?: string;
+  separationCause?: string;
+  remarks?: string; // e.g. "ORIGINAL", "SALARY TRANCHE", "STEP INCREMENT", "MATERNITY LEAVE"
   dateFrom?: string;
   dateTo?: string;
   salaryRate?: number;
   placeOfAssignment?: string;
-  separationDate?: string;
-  separationCause?: string;
 }
 
 export interface Personnel {
@@ -108,6 +115,8 @@ export interface Personnel {
   pob: string;
   schoolId: string; // Foreign Key referencing School.id
   schoolStation?: string; // Display station name
+  districtName?: string; // e.g. "VITALI DIST."
+  remittingAgency?: string; // e.g. "ZAMBOANGA CITY HIGH SCHOOL - 1000030811"
   gsisBPNo: string;
   personnelType: PersonnelType;
   employmentStatus: EmploymentStatus;

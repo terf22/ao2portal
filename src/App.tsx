@@ -31,6 +31,7 @@ import {
 import {
   getStoredSession,
   clearStoredSession,
+  updateUserSession,
 } from './services/authService';
 import {
   Personnel,
@@ -161,6 +162,14 @@ export default function App() {
     await reloadSchools();
   };
 
+  // User Profile Update Handler
+  const handleUpdateProfile = async (partial: Partial<UserSession>) => {
+    const updated = await updateUserSession(partial);
+    if (updated) {
+      setCurrentUser(updated);
+    }
+  };
+
   // Personnel DB Actions
   const handleAddPersonnel = async (personnel: Personnel) => {
     await db.personnel.add(personnel);
@@ -261,6 +270,7 @@ export default function App() {
           onOpenSchoolModal={() => setIsSchoolModalOpen(true)}
           onOpenGoogleDriveModal={() => setIsGoogleDriveModalOpen(true)}
           onSignOut={handleSignOut}
+          onUpdateProfile={handleUpdateProfile}
         />
 
         {/* Main Content Area */}
@@ -303,6 +313,7 @@ export default function App() {
               <ServiceRecordView
                 personnelList={personnelList}
                 currentUser={currentUser}
+                schoolProfile={schoolProfile}
                 onUpdatePersonnel={handleUpdatePersonnel}
               />
             )}

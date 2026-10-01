@@ -24,7 +24,7 @@ export function getGoogleClientId(): string {
   }
   return (
     (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
-    firebaseConfig.oAuthClientId ||
+    (firebaseConfig as any).oAuthClientId ||
     '151352064517-6m84egpp5mjc24psh011knn430cgajc9.apps.googleusercontent.com'
   );
 }
@@ -45,10 +45,17 @@ export const GOOGLE_CLIENT_ID = getGoogleClientId();
 export const firebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 
+export const googleLoginProvider = new GoogleAuthProvider();
+googleLoginProvider.addScope('email');
+googleLoginProvider.addScope('profile');
+googleLoginProvider.setCustomParameters({
+  prompt: 'select_account',
+});
+
 export const googleDriveProvider = new GoogleAuthProvider();
 googleDriveProvider.addScope('https://www.googleapis.com/auth/drive.file');
-googleDriveProvider.addScope('https://www.googleapis.com/auth/userinfo.email');
-googleDriveProvider.addScope('https://www.googleapis.com/auth/userinfo.profile');
+googleDriveProvider.addScope('email');
+googleDriveProvider.addScope('profile');
 googleDriveProvider.setCustomParameters({
   prompt: 'select_account',
 });
@@ -67,20 +74,21 @@ export function getGoogleAccessToken(): string | null {
 /**
  * Sign in using Firebase Google Auth popup
  * Yields user profile and OAuth access token
+ * @param requireDriveScope Whether to request Google Drive file access (sensitive). Defaults to false for normal sign in.
  */
-export async function signInWithGooglePopup(): Promise<{
+export async function signInWithGooglePopup(requireDriveScope: boolean = false): Promise<{
   user: FirebaseUser;
   accessToken: string;
 }> {
   try {
-    const result = await signInWithPopup(auth, googleDriveProvider);
+    const provider = requireDriveScope ? googleDriveProvider : googleLoginProvider;
+    const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     const token = credential?.accessToken;
 
     if (!token) {
       // Fallback: get token from STS or user
       const idToken = await result.user.getIdToken();
-      // If credential accessToken is somehow empty, still return user with idToken as fallback
       inMemoryAccessToken = token || idToken;
       return { user: result.user, accessToken: token || idToken };
     }
