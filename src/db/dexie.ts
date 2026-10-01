@@ -37,22 +37,7 @@ export const db = new AOIIDatabase();
 
 export const DEFAULT_SCHOOLS: School[] = [];
 
-export const DEFAULT_USERS: User[] = [
-  {
-    id: 'superadmin_id',
-    username: 'superadmin',
-    passwordHash: '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', // 'admin' sha256
-    fullName: 'Division Superintendent Office',
-    role: 'Superadmin',
-  },
-  {
-    id: 'aoii_id',
-    username: 'ao2_cluster',
-    passwordHash: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8', // 'password' sha256
-    fullName: 'Administrative Officer II',
-    role: 'AO II',
-  },
-];
+export const DEFAULT_USERS: User[] = [];
 
 export async function addAuditLog(
   actor: string,
@@ -132,14 +117,24 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
     }
   }
 
-  // Ensure default authentication users exist in Dexie only if empty
+  // Clean up any obsolete pre-configured demo accounts from IndexedDB
   try {
-    const userCount = await db.users.count();
-    if (userCount === 0) {
-      await db.users.bulkAdd(DEFAULT_USERS);
-    }
+    await db.users.where('username').anyOf(['superadmin', 'ao2_cluster']).delete();
+    await db.users.where('id').anyOf(['superadmin_id', 'aoii_id']).delete();
   } catch (err) {
-    console.warn('Error checking/seeding users table:', err);
+    console.warn('Error purging pre-configured accounts:', err);
+  }
+
+  // Seed default authentication users only if defined
+  if (DEFAULT_USERS.length > 0) {
+    try {
+      const userCount = await db.users.count();
+      if (userCount === 0) {
+        await db.users.bulkAdd(DEFAULT_USERS);
+      }
+    } catch (err) {
+      console.warn('Error checking/seeding users table:', err);
+    }
   }
 
   return true;

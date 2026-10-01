@@ -263,18 +263,6 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
     }
   };
 
-  // Quick Demo account filler
-  const fillDemoAccount = (role: 'AO II' | 'Superadmin') => {
-    setActiveTab('LOGIN');
-    if (role === 'AO II') {
-      setLoginIdentifier('ao2_cluster');
-      setLoginPassword('password');
-    } else {
-      setLoginIdentifier('superadmin');
-      setLoginPassword('admin');
-    }
-  };
-
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex flex-col justify-center items-center p-4 sm:p-6 lg:p-8 relative overflow-hidden font-sans">
       {/* Background Decorative Pattern */}
@@ -487,7 +475,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                     required
                     value={loginIdentifier}
                     onChange={(e) => setLoginIdentifier(e.target.value)}
-                    placeholder="e.g. ao2_cluster or juan.delacruz@deped.gov.ph"
+                    placeholder="e.g. maria_santos or maria.santos@deped.gov.ph"
                     className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-blue-800 focus:border-blue-800 outline-none transition"
                   />
                 </div>
@@ -533,29 +521,6 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                   </>
                 )}
               </button>
-
-              {/* Quick Fill Demo Helper */}
-              <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider text-center">
-                  Quick Sign-In Shortcut:
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fillDemoAccount('AO II')}
-                    className="flex-1 py-1.5 px-2 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-lg text-[11px] font-bold border border-blue-200 transition"
-                  >
-                    AO II Admin
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fillDemoAccount('Superadmin')}
-                    className="flex-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-[11px] font-bold border border-slate-200 transition"
-                  >
-                    Division Superadmin
-                  </button>
-                </div>
-              </div>
             </form>
           )}
 

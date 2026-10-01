@@ -26,7 +26,7 @@ export interface SchoolProfile {
 }
 
 export interface User {
-  id: string; // Unique identifier (e.g., "superadmin_id" or "aoii_id")
+  id: string; // Unique user identifier
   username: string; // Login username or email
   passwordHash?: string; // Hashed password stored client-side
   fullName: string;

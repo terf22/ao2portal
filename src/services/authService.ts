@@ -128,10 +128,7 @@ export async function loginWithCredentials(
 
   // Check password if set
   if (user.passwordHash && user.passwordHash !== hashedPassword) {
-    // For development convenience, check if plain match matches for demo presets
-    if (plainPassword !== 'admin' && plainPassword !== 'password' && plainPassword !== user.passwordHash) {
-      throw new Error('Incorrect password. Please try again.');
-    }
+    throw new Error('Incorrect password. Please try again.');
   }
 
   const session: UserSession = {
