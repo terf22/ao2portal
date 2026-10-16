@@ -20,13 +20,11 @@ import {
   authenticateWithGoogle,
 } from '../services/authService';
 import {
-  fetchGoogleUserProfile,
-  GoogleUserInfo,
-} from '../services/googleDriveService';
-import {
   signInWithGooglePopup,
   getGoogleClientId,
   setCustomGoogleClientId,
+  fetchGoogleUserProfile,
+  GoogleUserInfo,
 } from '../config/googleAuth';
 
 interface AuthGatewayProps {
@@ -161,7 +159,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
     }
   };
 
-  // Handle Google Sign-In & Google Drive OAuth
+  // Handle Google Sign-In
   const handleGoogleSignIn = async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -169,7 +167,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
 
     // Primary: Firebase Auth Popup Flow (Standard non-sensitive scopes: email, profile)
     try {
-      const { user, accessToken } = await signInWithGooglePopup(false);
+      const { user, accessToken } = await signInWithGooglePopup();
       const profile: GoogleUserInfo = {
         sub: user.uid,
         name: user.displayName || user.email || 'DepEd Google User',
@@ -219,7 +217,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                   regRole || 'AO II',
                   defaultSchoolName
                 );
-                setSuccessMsg(`Authenticated via Google (${profile.email}). Connected to Google Drive!`);
+                setSuccessMsg(`Authenticated via Google (${profile.email}). Welcome!`);
                 setTimeout(() => {
                   onLoginSuccess(session);
                 }, 400);
@@ -293,7 +291,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
             Administrative Officer II Portal
           </h1>
           <p className="text-xs text-blue-100/90 mt-1 max-w-sm mx-auto leading-relaxed">
-            School Operations, PIMS, CSC Form 48 DTR, SSL 2026 &amp; Google Drive Cloud Backup
+            School Operations, PIMS, CSC Form 48 DTR, SSL 2026 &amp; Real-time Cloud Synchronization
           </p>
         </div>
 
@@ -348,7 +346,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
             </div>
           )}
 
-          {/* Google Sign-In & Google Drive Button */}
+          {/* Google Sign-In Button */}
           <div className="space-y-2">
             <button
               type="button"
@@ -395,38 +393,48 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
             </div>
 
             {showGoogleHelp && (
-              <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-950 text-[11px] leading-relaxed space-y-2.5 shadow-sm">
-                <div>
-                  <p className="font-bold text-blue-900 text-xs">How to Allow Anyone to Sign In via Google</p>
-                  <p className="text-slate-600 mt-1">
-                    To make Google Sign-In accessible to any user without adding them to a &ldquo;Test Users&rdquo; list:
+              <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-950 text-[11px] leading-relaxed space-y-3 shadow-sm">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-amber-900">
+                  <p className="font-bold text-xs">Why &ldquo;gen-lang-client-...&rdquo; is not in your Google Cloud list</p>
+                  <p className="mt-1 text-slate-700">
+                    <code>gen-lang-client-0321813994</code> is a managed internal project created automatically by Google AI Studio to host the Firestore database in the cloud. It does not appear in your personal Google Cloud Console.
                   </p>
-                  <ol className="list-decimal list-inside text-slate-700 space-y-1 mt-1.5 pl-1">
-                    <li>Go to <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noreferrer" className="text-blue-700 font-bold underline">Google Cloud Console &gt; OAuth consent screen</a>.</li>
-                    <li>Under <strong>Publishing status</strong>, click the <strong>&ldquo;PUBLISH APP&rdquo;</strong> button.</li>
-                    <li>Confirm the dialog. The status will become <strong>&ldquo;In Production&rdquo;</strong>.</li>
-                    <li>Because this portal only uses standard login scopes (email &amp; profile), <strong>no verification or security review is required by Google</strong>! Anyone with any Google account can now log in immediately.</li>
-                  </ol>
                 </div>
 
-                <div className="p-2.5 rounded-lg bg-white border border-blue-100 text-slate-700 space-y-1.5">
-                  <p className="font-semibold text-blue-900">Custom OAuth Client ID (Optional)</p>
-                  <p className="text-[10px] text-slate-500">
-                    If running on a custom domain or personal project, you can provide your own Client ID:
+                <div>
+                  <p className="font-bold text-blue-900 text-xs">Recommended: Use Local School Accounts (No Google Setup Required)</p>
+                  <p className="text-slate-600 mt-1">
+                    Google Sign-In is completely optional. All staff, AOs, and Admins can simply click the <span className="font-bold text-blue-800">&ldquo;Create Account&rdquo;</span> tab above to sign in with any username/password.
                   </p>
+                  <p className="text-emerald-700 font-medium mt-1">
+                    ✓ All school records, personnel files, and reports STILL automatically sync to the shared cloud database in real time!
+                  </p>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-white border border-blue-100 text-slate-700 space-y-2">
+                  <p className="font-semibold text-blue-900">Want Google Sign-In for Your DepEd / School Domain?</p>
+                  <p className="text-[10px] text-slate-500">
+                    If you prefer Google Single Sign-On, you can connect your own free Google Cloud Project in 2 minutes:
+                  </p>
+                  <ol className="list-decimal list-inside text-slate-600 text-[10px] space-y-1 pl-1">
+                    <li>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-blue-700 underline font-semibold">Google Cloud Console</a> &rarr; click <strong>New Project</strong>.</li>
+                    <li>Go to <strong>APIs &amp; Services &gt; Credentials</strong> &rarr; click <strong>+ Create Credentials &gt; OAuth client ID</strong> (Web application).</li>
+                    <li>Add this app URL to <strong>Authorized JavaScript origins</strong>: <br/><code className="bg-slate-100 px-1 py-0.5 rounded text-[9px] select-all font-mono">{typeof window !== 'undefined' ? window.location.origin : 'https://...'}</code></li>
+                    <li>Copy your <strong>Client ID</strong> (ends with <code>.apps.googleusercontent.com</code>) and paste it below:</li>
+                  </ol>
 
                   <div className="flex gap-1.5 pt-1">
                     <input
                       type="text"
                       value={customClientIdInput}
                       onChange={(e) => setCustomClientIdInput(e.target.value)}
-                      placeholder="e.g. 123456...apps.googleusercontent.com"
+                      placeholder="Paste your OAuth Client ID here..."
                       className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-300 text-[10px] focus:ring-1 focus:ring-blue-600 outline-none font-mono"
                     />
                     <button
                       type="button"
                       onClick={handleSaveCustomClientId}
-                      className="px-2.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded-lg text-[10px] whitespace-nowrap transition"
+                      className="px-2.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded-lg text-[10px] whitespace-nowrap transition cursor-pointer"
                     >
                       Save
                     </button>
@@ -437,7 +445,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                           setCustomClientIdInput('');
                           setCustomGoogleClientId(null);
                         }}
-                        className="px-2 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-[10px] transition"
+                        className="px-2 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-[10px] transition cursor-pointer"
                       >
                         Reset
                       </button>

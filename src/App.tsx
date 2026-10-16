@@ -21,7 +21,6 @@ import { DataPortabilityPortal } from './components/DataPortabilityPortal';
 import { SuperadminSessionMonitor } from './components/SuperadminSessionMonitor';
 import { SchoolDetailsModal } from './components/SchoolDetailsModal';
 import { AuthGateway } from './components/AuthGateway';
-import { GoogleDriveBackupModal } from './components/GoogleDriveBackupModal';
 import {
   getStoredSchoolProfile,
   hasConfiguredSchoolProfile,
@@ -56,7 +55,6 @@ export default function App() {
   const [paperSize, setPaperSize] = useState<PrintPaperSize>('Cardstock_3.5x8.5');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
-  const [isGoogleDriveModalOpen, setIsGoogleDriveModalOpen] = useState(false);
 
   // Active School Station Profile (User-editable)
   const [schoolProfile, setSchoolProfile] = useState<SchoolProfile>(getStoredSchoolProfile);
@@ -320,7 +318,6 @@ export default function App() {
           onToggleMobileMenu={() => setIsMobileDrawerOpen((prev) => !prev)}
           schoolProfile={schoolProfile}
           onOpenSchoolModal={() => setIsSchoolModalOpen(true)}
-          onOpenGoogleDriveModal={() => setIsGoogleDriveModalOpen(true)}
           onSignOut={handleSignOut}
           onUpdateProfile={handleUpdateProfile}
         />
@@ -418,7 +415,6 @@ export default function App() {
                 personnelList={personnelList}
                 currentUser={currentUser}
                 onRefreshRoster={reloadRoster}
-                onOpenGoogleDriveModal={() => setIsGoogleDriveModalOpen(true)}
               />
             )}
 
@@ -441,19 +437,6 @@ export default function App() {
         currentProfile={schoolProfile}
         onSave={handleUpdateSchoolProfile}
       />
-
-      {/* Google Drive Cloud Backup & Restore Modal */}
-      {isGoogleDriveModalOpen && (
-        <GoogleDriveBackupModal
-          isOpen={isGoogleDriveModalOpen}
-          onClose={() => setIsGoogleDriveModalOpen(false)}
-          currentUser={currentUser}
-          schoolProfile={schoolProfile}
-          onRestoreComplete={async () => {
-            await reloadRoster();
-          }}
-        />
-      )}
     </div>
   );
 }

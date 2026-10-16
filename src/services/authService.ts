@@ -1,6 +1,6 @@
 import { db, addAuditLog } from '../db/dexie';
 import { User, UserRole, UserSession } from '../types';
-import { GoogleUserInfo, setCachedGoogleToken } from './googleDriveService';
+import { GoogleUserInfo, setCachedGoogleToken } from '../config/googleAuth';
 
 export const AUTH_STORAGE_KEY = 'aoii_portal_auth_session';
 
@@ -304,7 +304,7 @@ export async function authenticateWithGoogle(
     session.role,
     'AUTH',
     'USER_LOGIN_GOOGLE',
-    `Authenticated via Google Account (${cleanEmail}) with Google Drive permission`
+    `Authenticated via Google Account (${cleanEmail})`
   );
 
   return session;

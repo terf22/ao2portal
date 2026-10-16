@@ -15,6 +15,16 @@ import firebaseConfigJson from '../../firebase-applet-config.json';
 
 export const firebaseConfig = firebaseConfigJson;
 
+export interface GoogleUserInfo {
+  sub: string;
+  name: string;
+  given_name?: string;
+  family_name?: string;
+  picture?: string;
+  email: string;
+  email_verified?: boolean;
+}
+
 export function getGoogleClientId(): string {
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('ao2_custom_google_client_id');
@@ -52,14 +62,6 @@ googleLoginProvider.setCustomParameters({
   prompt: 'select_account',
 });
 
-export const googleDriveProvider = new GoogleAuthProvider();
-googleDriveProvider.addScope('https://www.googleapis.com/auth/drive.file');
-googleDriveProvider.addScope('email');
-googleDriveProvider.addScope('profile');
-googleDriveProvider.setCustomParameters({
-  prompt: 'select_account',
-});
-
 // Cache for access token in-memory
 let inMemoryAccessToken: string | null = null;
 
@@ -71,18 +73,36 @@ export function getGoogleAccessToken(): string | null {
   return inMemoryAccessToken;
 }
 
+export const setCachedGoogleToken = setGoogleAccessToken;
+export const getCachedGoogleToken = getGoogleAccessToken;
+
+/**
+ * Fetch authenticated Google User Profile info from userinfo endpoint
+ */
+export async function fetchGoogleUserProfile(accessToken: string): Promise<GoogleUserInfo> {
+  const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch Google profile: ${res.status} ${res.statusText}`);
+  }
+
+  return (await res.json()) as GoogleUserInfo;
+}
+
 /**
  * Sign in using Firebase Google Auth popup
- * Yields user profile and OAuth access token
- * @param requireDriveScope Whether to request Google Drive file access (sensitive). Defaults to false for normal sign in.
+ * Yields user profile and OAuth access token (standard email + profile scopes, no sensitive Drive scopes)
  */
-export async function signInWithGooglePopup(requireDriveScope: boolean = false): Promise<{
+export async function signInWithGooglePopup(): Promise<{
   user: FirebaseUser;
   accessToken: string;
 }> {
   try {
-    const provider = requireDriveScope ? googleDriveProvider : googleLoginProvider;
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(auth, googleLoginProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     const token = credential?.accessToken;
 

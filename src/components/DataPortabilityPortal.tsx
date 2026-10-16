@@ -28,14 +28,12 @@ interface DataPortabilityPortalProps {
   personnelList: Personnel[];
   currentUser: UserSession;
   onRefreshRoster: () => Promise<void>;
-  onOpenGoogleDriveModal?: () => void;
 }
 
 export const DataPortabilityPortal: React.FC<DataPortabilityPortalProps> = ({
   personnelList,
   currentUser,
   onRefreshRoster,
-  onOpenGoogleDriveModal,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -254,37 +252,31 @@ export const DataPortabilityPortal: React.FC<DataPortabilityPortalProps> = ({
         </div>
       </div>
 
-      {/* Google Drive Integration Card */}
+      {/* Cloud Sync & Local Storage Information Card */}
       <div className="bg-gradient-to-r from-blue-900 to-indigo-900 rounded-xl p-5 text-white shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0 border border-white/20">
-            <FolderSync className="w-5 h-5 text-amber-300" />
+            <Database className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
             <h3 className="text-sm font-bold flex items-center gap-2">
-              <span>Google Drive Cloud Backup &amp; Sync</span>
-              {currentUser.isGoogleLinked && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
-                  Connected
-                </span>
-              )}
+              <span>Firebase Cloud Database &amp; Local Drive Backups</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
+                Auto-Synced
+              </span>
             </h3>
             <p className="text-xs text-blue-200 mt-0.5">
-              Directly save or restore complete school database snapshots to your personal or DepEd Google Drive folder.
+              Your school data is automatically updated in real time to the Firebase Cloud database. You can also export portable, encrypted archives to your local computer or USB drives anytime below.
             </p>
           </div>
         </div>
 
-        {onOpenGoogleDriveModal && (
-          <button
-            type="button"
-            onClick={onOpenGoogleDriveModal}
-            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-xs shadow-xs transition flex items-center gap-2 shrink-0 cursor-pointer"
-          >
-            <UploadCloud className="w-4 h-4 text-slate-900" />
-            <span>Open Google Drive Cloud Storage</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/20 text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>Automatic Sync Active</span>
+          </span>
+        </div>
       </div>
 
       {/* Main Two-Column Workflow */}
