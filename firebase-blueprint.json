@@ -1,0 +1,69 @@
+{
+  "entities": {
+    "School": {
+      "title": "School",
+      "description": "DepEd School Profile and cluster details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "district": { "type": "string" },
+        "division": { "type": "string" },
+        "region": { "type": "string" },
+        "schoolHeadName": { "type": "string" },
+        "schoolHeadPosition": { "type": "string" },
+        "address": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "district"]
+    },
+    "Personnel": {
+      "title": "Personnel",
+      "description": "DepEd School Teaching & Non-Teaching Employee Record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolId": { "type": "string" },
+        "schoolStation": { "type": "string" },
+        "fullName": { "type": "string" },
+        "positionTitle": { "type": "string" },
+        "salaryGrade": { "type": "number" },
+        "stepIncrement": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "schoolStation", "positionTitle"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System event audit trail entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "actor": { "type": "string" },
+        "role": { "type": "string" },
+        "category": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "severity": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "actor", "action"]
+    }
+  },
+  "firestore": {
+    "/schools/{schoolId}": {
+      "schema": "School",
+      "description": "Collection of schools registered across the division"
+    },
+    "/personnel/{personnelId}": {
+      "schema": "Personnel",
+      "description": "Personnel records across school stations"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Division audit logs"
+    }
+  }
+}

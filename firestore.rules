@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Connection health check
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // DepEd School Profiles and Cluster Directory
+    match /schools/{schoolId} {
+      allow read, write: if true;
+    }
+
+    // Personnel Records & PIMS
+    match /personnel/{personnelId} {
+      allow read, write: if true;
+    }
+
+    // Division Audit Logs
+    match /audit_logs/{logId} {
+      allow read, write: if true;
+    }
+  }
+}

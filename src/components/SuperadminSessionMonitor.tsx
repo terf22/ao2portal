@@ -13,19 +13,30 @@ import {
   Laptop,
   Table as TableIcon,
   Smartphone,
+  Building2,
+  Cloud,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
-import { getAuditLogs } from '../db/dexie';
-import { AuditLog, AuditSeverity, UserRole, UserSession } from '../types';
+import { getAuditLogs, db } from '../db/dexie';
+import { AuditLog, AuditSeverity, UserRole, UserSession, School } from '../types';
+import { pullAllCloudData, publishAllLocalToCloud } from '../services/cloudSyncService';
 
 interface SuperadminSessionMonitorProps {
   currentUser: UserSession;
   allStations: string[];
+  schools?: School[];
+  onRefreshSchools?: () => Promise<void>;
 }
 
 export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> = ({
   currentUser,
   allStations,
+  schools = [],
+  onRefreshSchools,
 }) => {
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [cloudSyncMsg, setCloudSyncMsg] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [severityFilter, setSeverityFilter] = useState<'ALL' | AuditSeverity>('ALL');
@@ -110,6 +121,24 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
     }
   };
 
+  const handleSyncDivisionCloud = async () => {
+    setIsCloudSyncing(true);
+    setCloudSyncMsg(null);
+    try {
+      await publishAllLocalToCloud();
+      const res = await pullAllCloudData();
+      if (onRefreshSchools) {
+        await onRefreshSchools();
+      }
+      setCloudSyncMsg(`Cloud sync complete! ${res.schoolsCount} school(s) and ${res.personnelCount} personnel synchronized.`);
+      setTimeout(() => setCloudSyncMsg(null), 4000);
+    } catch (err) {
+      setCloudSyncMsg(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header Banner */}
@@ -127,14 +156,89 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
             </p>
           </div>
 
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-sm transition"
-          >
-            <Download className="w-3.5 h-3.5 text-amber-400" />
-            <span>Export Audit Trail (CSV)</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSyncDivisionCloud}
+              disabled={isCloudSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-900 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold shadow-sm transition disabled:opacity-50"
+              title="Synchronize division database with Firestore cloud"
+            >
+              <Cloud className="w-3.5 h-3.5 text-amber-300" />
+              <span>{isCloudSyncing ? 'Syncing...' : 'Sync Division Cloud'}</span>
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+            >
+              <Download className="w-3.5 h-3.5 text-amber-400" />
+              <span>Export Audit Trail (CSV)</span>
+            </button>
+          </div>
         </div>
+      </div>
+
+      {/* Division Schools Cloud Overview Card */}
+      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 flex items-center justify-center shrink-0">
+              <Building2 className="w-5 h-5 text-blue-800" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Division Schools Cloud Registry ({schools.length} Schools Live)
+                </h3>
+                <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  <Cloud className="w-3 h-3 text-emerald-600" />
+                  <span>Real-Time Cloud Synced</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Every school in the division that runs this portal automatically synchronizes its school profile and cluster data here in real time.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {cloudSyncMsg && (
+          <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{cloudSyncMsg}</span>
+          </div>
+        )}
+
+        {schools.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {schools.map((sch) => (
+              <div
+                key={sch.id}
+                className="p-3 rounded-lg border border-slate-200 bg-slate-50/70 hover:bg-blue-50/40 hover:border-blue-200 transition"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-bold text-xs text-slate-900 leading-snug line-clamp-1">
+                    {sch.name}
+                  </span>
+                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 shrink-0">
+                    ID: {sch.id}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
+                  <span>{sch.district || 'Central District'}</span>
+                  {sch.schoolHeadName && (
+                    <span className="text-[10px] text-slate-600 truncate max-w-[130px]">
+                      Head: {sch.schoolHeadName}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-6 border border-dashed border-slate-200 rounded-lg text-slate-500 text-xs">
+            No schools registered yet. When school Administrative Officers enter their School Details, they will appear here live.
+          </div>
+        )}
       </div>
 
       {/* Real-Time Client Sessions Telemetry */}

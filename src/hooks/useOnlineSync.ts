@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { db, addAuditLog } from '../db/dexie';
+import { syncQueueItemToFirestore, publishAllLocalToCloud, testFirestoreConnection } from '../services/cloudSyncService';
 
 export type CloudSyncStatus = 'Synced' | 'Syncing...' | 'Offline Mode' | 'Authentication Expired';
 
@@ -23,7 +24,7 @@ export function useOnlineSync() {
     }
   }, []);
 
-  // Process queue when online
+  // Process queue when online by sending mutations to Firestore
   const processSyncQueue = useCallback(async () => {
     if (isSyncingRef.current || !navigator.onLine) return;
 
@@ -38,30 +39,38 @@ export function useOnlineSync() {
       isSyncingRef.current = true;
       setSyncStatus('Syncing...');
 
-      // Debounce and process each batch
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
+      // Process queued items to Firestore
+      let successCount = 0;
       for (const item of items) {
-        // Here we simulate successful sync to the cloud (Supabase/PostgreSQL backend)
-        // In full stack, this calls `/api/sync` or Supabase REST endpoint
-        if (item.id !== undefined) {
-          await db.syncQueue.delete(item.id);
+        try {
+          await syncQueueItemToFirestore(item);
+          if (item.id !== undefined) {
+            await db.syncQueue.delete(item.id);
+          }
+          successCount++;
+        } catch (itemErr) {
+          console.warn(`Item ${item.id} sync paused:`, itemErr);
+          // If network error, stop processing batch and retry later
+          break;
         }
       }
 
-      await addAuditLog(
-        'System Cloud Sync Agent',
-        'System',
-        'CLOUD_SYNC',
-        'QUEUE_FLUSH',
-        `Successfully synced ${items.length} pending queued mutations to cloud database.`
-      );
+      if (successCount > 0) {
+        await addAuditLog(
+          'Division Cloud Sync Agent',
+          'System',
+          'CLOUD_SYNC',
+          'QUEUE_FLUSH',
+          `Successfully synchronized ${successCount} record(s) to Division Firestore database.`
+        );
+      }
 
+      const remaining = await db.syncQueue.count();
+      setPendingCount(remaining);
       setLastSyncTime(new Date().toLocaleTimeString('en-PH'));
-      setSyncStatus('Synced');
-      setPendingCount(0);
+      setSyncStatus(remaining === 0 ? 'Synced' : 'Offline Mode');
     } catch (err) {
-      console.error('Failed to sync queue:', err);
+      console.error('Failed to sync queue to cloud:', err);
       setSyncStatus('Offline Mode');
     } finally {
       isSyncingRef.current = false;
@@ -69,6 +78,8 @@ export function useOnlineSync() {
   }, []);
 
   useEffect(() => {
+    testFirestoreConnection();
+
     const handleOnline = () => {
       setIsOnline(true);
       setSyncStatus('Syncing...');
@@ -91,7 +102,7 @@ export function useOnlineSync() {
       if (navigator.onLine) {
         processSyncQueue();
       }
-    }, 15000);
+    }, 12000);
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -108,11 +119,28 @@ export function useOnlineSync() {
     await processSyncQueue();
   };
 
+  const triggerFullPublish = async () => {
+    if (!navigator.onLine) {
+      setSyncStatus('Offline Mode');
+      return;
+    }
+    setSyncStatus('Syncing...');
+    try {
+      await publishAllLocalToCloud();
+      await processSyncQueue();
+      setSyncStatus('Synced');
+      setLastSyncTime(new Date().toLocaleTimeString('en-PH'));
+    } catch {
+      setSyncStatus('Offline Mode');
+    }
+  };
+
   return {
     isOnline,
     syncStatus,
     lastSyncTime,
     pendingCount,
     triggerManualSync,
+    triggerFullPublish,
   };
 }

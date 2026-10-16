@@ -41,6 +41,12 @@ import {
   UserRole,
   UserSession,
 } from './types';
+import {
+  subscribeToCloudSchools,
+  subscribeToCloudPersonnel,
+  pullAllCloudData,
+  publishAllLocalToCloud,
+} from './services/cloudSyncService';
 
 export default function App() {
   const [personnelList, setPersonnelList] = useState<Personnel[]>([]);
@@ -132,6 +138,52 @@ export default function App() {
   useEffect(() => {
     reloadRoster();
   }, [reloadRoster]);
+
+  // Cloud Synchronization: Live listeners for Division Schools & Personnel
+  useEffect(() => {
+    // Initial cloud fetch to update local database cache
+    pullAllCloudData()
+      .then(() => reloadRoster())
+      .catch((err) => console.warn('Cloud initial pull notice:', err));
+
+    // Real-time listener for any school in the Division
+    const unsubSchools = subscribeToCloudSchools((cloudSchools) => {
+      if (cloudSchools && cloudSchools.length > 0) {
+        setSchools((prev) => {
+          const map = new Map<string, School>();
+          prev.forEach((s) => map.set(s.id, s));
+          cloudSchools.forEach((s) => map.set(s.id, s));
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    // Real-time listener for personnel (enables Superadmin to see all school personnel live)
+    let unsubPersonnel: (() => void) | undefined;
+    if (currentUser?.role === 'Superadmin') {
+      unsubPersonnel = subscribeToCloudPersonnel((cloudPersonnel) => {
+        if (cloudPersonnel && cloudPersonnel.length > 0) {
+          setPersonnelList((prev) => {
+            const map = new Map<string, Personnel>();
+            prev.forEach((p) => map.set(p.id, p));
+            cloudPersonnel.forEach((p) => map.set(p.id, p));
+            return Array.from(map.values());
+          });
+        }
+      });
+    }
+
+    // Auto-publish local profile to cloud so current station is known division-wide
+    const timer = setTimeout(() => {
+      publishAllLocalToCloud().catch(() => {});
+    }, 2500);
+
+    return () => {
+      unsubSchools();
+      if (unsubPersonnel) unsubPersonnel();
+      clearTimeout(timer);
+    };
+  }, [currentUser?.role, reloadRoster]);
 
   // Role Switcher Handler
   const handleRoleChange = (newRole: UserRole) => {
@@ -374,6 +426,8 @@ export default function App() {
               <SuperadminSessionMonitor
                 currentUser={currentUser}
                 allStations={stations}
+                schools={schools}
+                onRefreshSchools={reloadSchools}
               />
             )}
           </div>
