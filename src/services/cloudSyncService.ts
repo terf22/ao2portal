@@ -544,6 +544,57 @@ export async function deleteCloudDocument(
 }
 
 /**
+ * Delete multiple specific documents from a Firebase Firestore collection in batches
+ */
+export async function deleteMultipleCloudDocuments(
+  coll: CloudCollectionType,
+  docIds: string[],
+  operatorUsername: string = 'Superadmin',
+  deleteFromLocal: boolean = true
+): Promise<number> {
+  if (!docIds || docIds.length === 0) return 0;
+  let deletedCount = 0;
+  const path = coll;
+
+  try {
+    const chunkSize = 400;
+    for (let i = 0; i < docIds.length; i += chunkSize) {
+      const chunk = docIds.slice(i, i + chunkSize);
+      const batch = writeBatch(firestoreDb);
+      for (const id of chunk) {
+        batch.delete(doc(firestoreDb, coll, id));
+      }
+      await batch.commit();
+      deletedCount += chunk.length;
+    }
+
+    if (deleteFromLocal) {
+      try {
+        if (coll === 'personnel') await db.personnel.bulkDelete(docIds);
+        else if (coll === 'schools') await db.schools.bulkDelete(docIds);
+        else if (coll === 'announcements') await db.announcements.bulkDelete(docIds);
+        else if (coll === 'audit_logs') await db.auditLogs.bulkDelete(docIds);
+      } catch (localErr) {
+        console.warn('Local mirror multi-deletion note:', localErr);
+      }
+    }
+
+    await addAuditLog(
+      operatorUsername,
+      'Superadmin',
+      'SECURITY',
+      'CLOUD_MULTI_DOC_DELETE',
+      `Superadmin batch-deleted ${deletedCount} documents from Firestore collection "${coll}" (Local purge: ${deleteFromLocal}).`,
+      'CRITICAL'
+    );
+
+    return deletedCount;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.BATCH, path);
+  }
+}
+
+/**
  * Purge all documents from a specific Firestore collection in batches
  */
 export async function purgeCloudCollection(

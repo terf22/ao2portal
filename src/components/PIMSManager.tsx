@@ -12,9 +12,13 @@ import {
   UserCheck,
   Eye,
   Calendar,
+  AlertTriangle,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { formatPHP, getSalary } from '../data/ssl2026Tranche';
 import { addAuditLog } from '../db/dexie';
+import { deleteMultipleCloudDocuments } from '../services/cloudSyncService';
 import {
   EmploymentStatus,
   Personnel,
@@ -46,9 +50,31 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
   onUpdatePersonnel,
   onDeletePersonnel,
 }) => {
+  const isSuperadmin = currentUser.role === 'Superadmin';
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'Teaching' | 'Non-Teaching'>('ALL');
   const [filterStation, setFilterStation] = useState<string>('ALL');
+
+  // Combined Unique Station/School Names for filtering
+  const allStationNames = useMemo(() => {
+    const set = new Set<string>(stations);
+    if (schools) {
+      schools.forEach((s) => {
+        if (s.name) set.add(s.name);
+      });
+    }
+    personnelList.forEach((p) => {
+      if (p.schoolStation) set.add(p.schoolStation);
+    });
+    return Array.from(set).filter(Boolean).sort();
+  }, [stations, schools, personnelList]);
+
+  // Multi-selection state for Superadmin bulk deletion
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkConfirmText, setBulkConfirmText] = useState('');
+  const [bulkFeedback, setBulkFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -98,6 +124,70 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
     });
   }, [personnelList, filterType, filterStation, searchTerm]);
 
+  // Filtered ID helpers for multi-select
+  const allFilteredIds = useMemo(() => filteredList.map((p) => p.id), [filteredList]);
+  const isAllFilteredSelected = useMemo(
+    () => allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedIds.includes(id)),
+    [allFilteredIds, selectedIds]
+  );
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleToggleSelectAll = () => {
+    if (isAllFilteredSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !allFilteredIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...allFilteredIds])));
+    }
+  };
+
+  const selectedPersonnelObjects = useMemo(() => {
+    return personnelList.filter((p) => selectedIds.includes(p.id));
+  }, [personnelList, selectedIds]);
+
+  const handleExecuteBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    setIsBulkDeleting(true);
+    setBulkFeedback(null);
+
+    try {
+      const deletedCount = await deleteMultipleCloudDocuments(
+        'personnel',
+        selectedIds,
+        currentUser.fullName || currentUser.username || 'Superadmin',
+        true
+      );
+
+      for (const id of selectedIds) {
+        try {
+          await onDeletePersonnel(id);
+        } catch {
+          // already removed in bulkDelete
+        }
+      }
+
+      setBulkFeedback({
+        type: 'success',
+        text: `Successfully deleted ${deletedCount} personnel record(s) from local storage and Firebase Cloud Firestore!`,
+      });
+      setSelectedIds([]);
+      setShowBulkDeleteModal(false);
+      setBulkConfirmText('');
+      setTimeout(() => setBulkFeedback(null), 5000);
+    } catch (err) {
+      setBulkFeedback({
+        type: 'error',
+        text: `Failed to delete personnel: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   const handleOpenAdd = () => {
     const generatedId = `DEPED-ZC-${Math.floor(100000 + Math.random() * 900000)}`;
     setEditingPersonnel(null);
@@ -141,20 +231,31 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
   const handleDelete = async (p: Personnel) => {
     if (
       !window.confirm(
-        `Are you sure you want to delete ${p.lastName}, ${p.firstName} (${p.id})? This cannot be undone.`
+        `Are you sure you want to delete ${p.lastName}, ${p.firstName} (${p.id})? This will permanently delete this record from both local database and Firebase Cloud Firestore.`
       )
     ) {
       return;
     }
 
-    await onDeletePersonnel(p.id);
-    await addAuditLog(
-      currentUser.username,
-      currentUser.role,
-      'SECURITY',
-      'PERSONNEL_DELETE',
-      `Deleted personnel profile ${p.lastName}, ${p.firstName} (${p.id})`
-    );
+    try {
+      await deleteMultipleCloudDocuments(
+        'personnel',
+        [p.id],
+        currentUser.fullName || currentUser.username || 'User',
+        true
+      );
+      await onDeletePersonnel(p.id);
+      setBulkFeedback({
+        type: 'success',
+        text: `Deleted personnel profile ${p.lastName}, ${p.firstName} (${p.id}) from local database and Firebase Firestore.`,
+      });
+      setTimeout(() => setBulkFeedback(null), 4000);
+    } catch (err) {
+      setBulkFeedback({
+        type: 'error',
+        text: `Failed to delete personnel: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -288,11 +389,13 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
             <select
               aria-label="Filter by School Station"
               value={filterStation}
-              onChange={(e) => setFilterStation(e.target.value)}
+              onChange={(e) => {
+                setFilterStation(e.target.value);
+              }}
               className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:ring-1 focus:ring-blue-600 focus:outline-none"
             >
-              <option value="ALL">All Stations ({stations.length})</option>
-              {stations.map((st) => (
+              <option value="ALL">All Stations / Schools ({allStationNames.length})</option>
+              {allStationNames.map((st) => (
                 <option key={st} value={st}>
                   {st}
                 </option>
@@ -304,6 +407,98 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
             Showing <strong>{filteredList.length}</strong> of {personnelList.length} records
           </span>
         </div>
+
+        {/* Bulk Feedback Banner */}
+        {bulkFeedback && (
+          <div
+            className={`mt-3 p-3 rounded-lg text-xs flex items-center justify-between ${
+              bulkFeedback.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {bulkFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              )}
+              <span className="font-semibold">{bulkFeedback.text}</span>
+            </div>
+            <button
+              onClick={() => setBulkFeedback(null)}
+              className="text-slate-400 hover:text-slate-600 font-bold ml-3"
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
+        {/* Superadmin Bulk Action Bar */}
+        {isSuperadmin && (
+          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-amber-50/70 p-2.5 rounded-lg border border-amber-200/80">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2 py-0.5 bg-amber-200 text-amber-900 font-bold rounded text-[11px]">
+                Superadmin Mode
+              </span>
+              <span className="text-slate-700">
+                {selectedIds.length > 0 ? (
+                  <>
+                    <strong className="text-slate-900">{selectedIds.length}</strong> personnel selected
+                    {filterStation !== 'ALL' && (
+                      <span className="text-slate-500"> in {filterStation}</span>
+                    )}
+                  </>
+                ) : (
+                  <>Select records below to perform bulk Firebase &amp; local deletion</>
+                )}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={handleToggleSelectAll}
+                className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded border border-slate-300 shadow-2xs transition flex items-center gap-1.5"
+              >
+                {isAllFilteredSelected ? (
+                  <>
+                    <CheckSquare className="w-3.5 h-3.5 text-blue-700" />
+                    <span>Deselect Filtered ({allFilteredIds.length})</span>
+                  </>
+                ) : (
+                  <>
+                    <Square className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Select All Filtered ({allFilteredIds.length})</span>
+                  </>
+                )}
+              </button>
+
+              {selectedIds.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds([])}
+                    className="px-2.5 py-1 text-slate-500 hover:text-slate-800 font-medium"
+                  >
+                    Clear Selection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkConfirmText('');
+                      setShowBulkDeleteModal(true);
+                    }}
+                    className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded shadow-xs flex items-center gap-1.5 transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete {selectedIds.length} from Firebase &amp; Local</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Personnel Table */}
@@ -312,6 +507,22 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                {isSuperadmin && (
+                  <th className="p-3 w-10 text-center">
+                    <button
+                      type="button"
+                      onClick={handleToggleSelectAll}
+                      className="text-slate-500 hover:text-slate-900 focus:outline-none"
+                      title={isAllFilteredSelected ? 'Deselect all filtered' : 'Select all filtered'}
+                    >
+                      {isAllFilteredSelected ? (
+                        <CheckSquare className="w-4 h-4 text-blue-700 inline" />
+                      ) : (
+                        <Square className="w-4 h-4 inline" />
+                      )}
+                    </button>
+                  </th>
+                )}
                 <th className="p-3">Employee ID &amp; Name</th>
                 <th className="p-3">Position Title</th>
                 <th className="p-3">Type &amp; Station</th>
@@ -324,79 +535,102 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
             <tbody className="divide-y divide-slate-100 text-slate-900">
               {filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-400">
+                  <td colSpan={isSuperadmin ? 8 : 7} className="p-8 text-center text-slate-400">
                     No matching personnel found for current search/filters.
                   </td>
                 </tr>
               ) : (
-                filteredList.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="p-3">
-                      <div className="font-bold text-slate-900">
-                        {p.lastName}, {p.firstName} {p.middleName ? p.middleName[0] + '.' : ''} {p.extensionName || ''}
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-mono">{p.id}</div>
-                    </td>
-                    <td className="p-3">
-                      <span className="font-semibold text-slate-800">{p.positionTitle}</span>
-                      <div className="text-[10.5px] text-slate-500">{p.employmentStatus}</div>
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold mb-0.5 ${
-                          p.personnelType === 'Teaching'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-purple-100 text-purple-800'
-                        }`}
-                      >
-                        {p.personnelType}
-                      </span>
-                      <div className="text-[11px] text-slate-600 truncate max-w-[180px]">
-                        {p.schoolStation}
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <div className="font-mono font-bold text-slate-900">
-                        SG {p.salaryGrade} Step {p.stepIncrement}
-                      </div>
-                      <div className="text-[11px] text-emerald-700 font-mono">
-                        {formatPHP(getSalary(p.salaryGrade, p.stepIncrement))}
-                      </div>
-                    </td>
-                    <td className="p-3 text-[11px] font-mono text-slate-600">
-                      <div>TIN: {p.tin}</div>
-                      <div>BP: {p.gsisBPNo}</div>
-                    </td>
-                    <td className="p-3 font-mono text-[11px] text-slate-700">
-                      {p.continuousServiceStart}
-                    </td>
-                    <td className="p-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setViewingPersonnel(p)}
-                          className="p-1.5 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900"
-                          title="View Profile Details"
+                filteredList.map((p) => {
+                  const isSelected = selectedIds.includes(p.id);
+                  return (
+                    <tr
+                      key={p.id}
+                      className={`transition-colors ${
+                        isSelected ? 'bg-amber-50/70' : 'hover:bg-slate-50/80'
+                      }`}
+                    >
+                      {isSuperadmin && (
+                        <td className="p-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSelect(p.id)}
+                            className="text-slate-500 hover:text-slate-900 focus:outline-none"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-4 h-4 text-amber-700 inline" />
+                            ) : (
+                              <Square className="w-4 h-4 inline text-slate-400" />
+                            )}
+                          </button>
+                        </td>
+                      )}
+                      <td className="p-3">
+                        <div className="font-bold text-slate-900">
+                          {p.lastName}, {p.firstName} {p.middleName ? p.middleName[0] + '.' : ''} {p.extensionName || ''}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono">{p.id}</div>
+                      </td>
+                      <td className="p-3">
+                        <span className="font-semibold text-slate-800">{p.positionTitle}</span>
+                        <div className="text-[10.5px] text-slate-500">{p.employmentStatus}</div>
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold mb-0.5 ${
+                            p.personnelType === 'Teaching'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-purple-100 text-purple-800'
+                          }`}
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleOpenEdit(p)}
-                          className="p-1.5 rounded hover:bg-blue-50 text-blue-600 hover:text-blue-900"
-                          title="Edit Personnel Record"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(p)}
-                          className="p-1.5 rounded hover:bg-rose-50 text-rose-600 hover:text-rose-900"
-                          title="Delete Personnel"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          {p.personnelType}
+                        </span>
+                        <div className="text-[11px] text-slate-600 truncate max-w-[180px]">
+                          {p.schoolStation}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-mono font-bold text-slate-900">
+                          SG {p.salaryGrade} Step {p.stepIncrement}
+                        </div>
+                        <div className="text-[11px] text-emerald-700 font-mono">
+                          {formatPHP(getSalary(p.salaryGrade, p.stepIncrement))}
+                        </div>
+                      </td>
+                      <td className="p-3 text-[11px] font-mono text-slate-600">
+                        <div>TIN: {p.tin}</div>
+                        <div>BP: {p.gsisBPNo}</div>
+                      </td>
+                      <td className="p-3 font-mono text-[11px] text-slate-700">
+                        {p.continuousServiceStart}
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => setViewingPersonnel(p)}
+                            className="p-1.5 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900"
+                            title="View Profile Details"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenEdit(p)}
+                            className="p-1.5 rounded hover:bg-blue-50 text-blue-600 hover:text-blue-900"
+                            title="Edit Personnel Record"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(p)}
+                            className="p-1.5 rounded hover:bg-rose-50 text-rose-600 hover:text-rose-900"
+                            title="Delete Personnel"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -803,6 +1037,130 @@ export const PIMSManager: React.FC<PIMSManagerProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Superadmin Bulk Deletion Modal */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-fadeIn">
+          <div className="w-full max-w-xl bg-white rounded-xl shadow-2xl border border-rose-300 overflow-hidden text-slate-900">
+            {/* Modal Header */}
+            <div className="bg-rose-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-bold">
+                  Confirm Bulk Deletion — {selectedIds.length} Personnel Record(s)
+                </h3>
+              </div>
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={() => {
+                  setShowBulkDeleteModal(false);
+                  setBulkConfirmText('');
+                }}
+                className="text-rose-200 hover:text-white font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              {/* Warning Alert */}
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-950 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>Permanent &amp; Synchronized Cloud Deletion</span>
+                </div>
+                <p className="text-[11.5px] leading-relaxed">
+                  You are about to permanently delete <strong>{selectedIds.length}</strong> personnel record(s) from{' '}
+                  <span className="font-semibold underline">both</span> local browser storage (IndexedDB) and{' '}
+                  <span className="font-semibold underline">Firebase Cloud Firestore</span> (collection: <code className="bg-rose-100 px-1 py-0.5 rounded">personnel</code>).
+                </p>
+                <p className="text-[11px] text-rose-800 font-medium">
+                  This action cannot be undone. Associated school-level rosters will immediately reflect this change.
+                </p>
+              </div>
+
+              {/* Selected Items Scrollable Summary */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-bold text-slate-700">
+                    Target Personnel to Delete ({selectedPersonnelObjects.length}):
+                  </span>
+                  <span className="text-slate-400 text-[11px]">
+                    Filtered station: {filterStation}
+                  </span>
+                </div>
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100 bg-slate-50">
+                  {selectedPersonnelObjects.map((p) => (
+                    <div key={p.id} className="p-2 flex items-center justify-between text-[11.5px]">
+                      <div>
+                        <span className="font-bold text-slate-900">
+                          {p.lastName}, {p.firstName} {p.middleName ? p.middleName[0] + '.' : ''}
+                        </span>{' '}
+                        <span className="text-slate-400 font-mono text-[10.5px]">({p.id})</span>
+                        <div className="text-[10.5px] text-slate-500">
+                          {p.positionTitle} &bull; {p.schoolStation}
+                        </div>
+                      </div>
+                      <span className="font-mono text-[10.5px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-bold">
+                        SG {p.salaryGrade}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Typed Confirmation Check */}
+              <div className="pt-2">
+                <label className="block font-bold text-slate-800 mb-1">
+                  To confirm, type <span className="font-mono text-rose-700 font-extrabold">DELETE</span> in the box below:
+                </label>
+                <input
+                  type="text"
+                  value={bulkConfirmText}
+                  onChange={(e) => setBulkConfirmText(e.target.value)}
+                  placeholder="Type DELETE"
+                  disabled={isBulkDeleting}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono text-xs focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  disabled={isBulkDeleting}
+                  onClick={() => {
+                    setShowBulkDeleteModal(false);
+                    setBulkConfirmText('');
+                  }}
+                  className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkConfirmText.trim() !== 'DELETE' || isBulkDeleting}
+                  onClick={handleExecuteBulkDelete}
+                  className="px-5 py-2 rounded-lg bg-rose-700 hover:bg-rose-800 text-white font-bold transition shadow-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isBulkDeleting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Deleting from Cloud &amp; Local...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      <span>Permanently Delete from Cloud &amp; Local</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

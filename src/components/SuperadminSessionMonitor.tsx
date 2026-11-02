@@ -62,6 +62,7 @@ import {
   fetchCloudMetrics,
   fetchCloudCollectionRecords,
   deleteCloudDocument,
+  deleteMultipleCloudDocuments,
   purgeCloudCollection,
   purgeEntireCloudDatabase,
   CloudCollectionType,
@@ -150,6 +151,10 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
   const [cloudRecords, setCloudRecords] = useState<CloudRecordSummary[]>([]);
   const [cloudRecordsLoading, setCloudRecordsLoading] = useState(false);
   const [cloudSearchTerm, setCloudSearchTerm] = useState('');
+  const [cloudSchoolFilter, setCloudSchoolFilter] = useState<string>('ALL');
+  const [cloudSelectedDocIds, setCloudSelectedDocIds] = useState<string[]>([]);
+  const [cloudBatchDeleteModalOpen, setCloudBatchDeleteModalOpen] = useState(false);
+  const [cloudBatchDeleteInput, setCloudBatchDeleteInput] = useState('');
   const [isExecutingCloudAction, setIsExecutingCloudAction] = useState(false);
   const [purgeLocalMirror, setPurgeLocalMirror] = useState(true);
 
@@ -363,17 +368,115 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
     });
   }, [auditLogs, severityFilter, categoryFilter, logSearchTerm]);
 
+  // Available School Station Names for cloud personnel filter
+  const cloudPersonnelSchools = useMemo(() => {
+    const set = new Set<string>(allStations);
+    if (schools) {
+      schools.forEach((s) => {
+        if (s.name) set.add(s.name);
+      });
+    }
+    cloudRecords.forEach((r) => {
+      const st = (r.raw?.schoolStation as string) || '';
+      if (st) set.add(st);
+    });
+    return Array.from(set).filter(Boolean).sort();
+  }, [allStations, schools, cloudRecords]);
+
   // Filtered cloud documents for inspector
   const filteredCloudRecords = useMemo(() => {
-    if (!cloudSearchTerm.trim()) return cloudRecords;
-    const term = cloudSearchTerm.toLowerCase();
-    return cloudRecords.filter(
-      (r) =>
+    return cloudRecords.filter((r) => {
+      // School station filter when inspecting personnel collection
+      if (cloudActiveColl === 'personnel' && cloudSchoolFilter !== 'ALL') {
+        const rawStation = (r.raw?.schoolStation as string) || '';
+        const inSubtitle = r.subtitle.toLowerCase().includes(cloudSchoolFilter.toLowerCase());
+        if (rawStation !== cloudSchoolFilter && !inSubtitle) return false;
+      }
+      if (!cloudSearchTerm.trim()) return true;
+      const term = cloudSearchTerm.toLowerCase();
+      return (
         r.id.toLowerCase().includes(term) ||
         r.title.toLowerCase().includes(term) ||
         r.subtitle.toLowerCase().includes(term)
+      );
+    });
+  }, [cloudRecords, cloudSearchTerm, cloudActiveColl, cloudSchoolFilter]);
+
+  // Multi-selection helpers for cloud records
+  const filteredCloudDocIds = useMemo(
+    () => filteredCloudRecords.map((r) => r.id),
+    [filteredCloudRecords]
+  );
+
+  const isAllCloudSelected = useMemo(
+    () =>
+      filteredCloudDocIds.length > 0 &&
+      filteredCloudDocIds.every((id) => cloudSelectedDocIds.includes(id)),
+    [filteredCloudDocIds, cloudSelectedDocIds]
+  );
+
+  const handleToggleCloudSelectAll = () => {
+    if (isAllCloudSelected) {
+      setCloudSelectedDocIds((prev) => prev.filter((id) => !filteredCloudDocIds.includes(id)));
+    } else {
+      setCloudSelectedDocIds((prev) => Array.from(new Set([...prev, ...filteredCloudDocIds])));
+    }
+  };
+
+  const handleToggleCloudSelect = (id: string) => {
+    setCloudSelectedDocIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
-  }, [cloudRecords, cloudSearchTerm]);
+  };
+
+  const handleOpenBatchDelete = () => {
+    setCloudBatchDeleteInput('');
+    setCloudBatchDeleteModalOpen(true);
+  };
+
+  const handleExecuteBatchCloudDelete = async () => {
+    if (cloudSelectedDocIds.length === 0) return;
+    if (cloudBatchDeleteInput.trim() !== 'DELETE') {
+      setActionFeedback({
+        type: 'error',
+        message: 'Confirmation mismatch! Please type DELETE to confirm.',
+      });
+      return;
+    }
+
+    setIsExecutingCloudAction(true);
+    setActionFeedback(null);
+
+    try {
+      const count = await deleteMultipleCloudDocuments(
+        cloudActiveColl,
+        cloudSelectedDocIds,
+        currentUser.fullName || currentUser.username || 'Superadmin',
+        purgeLocalMirror
+      );
+
+      setActionFeedback({
+        type: 'success',
+        message: `Successfully deleted ${count} record(s) from collection "${cloudActiveColl}" in Firebase Firestore and local database!`,
+      });
+      setCloudSelectedDocIds([]);
+      setCloudBatchDeleteModalOpen(false);
+      setCloudBatchDeleteInput('');
+      await loadCloudMetrics();
+      await loadCloudRecords(cloudActiveColl);
+      await loadLogs();
+      if (onRefreshSchools) await onRefreshSchools();
+      if (onRefreshRoster) await onRefreshRoster();
+      setTimeout(() => setActionFeedback(null), 5000);
+    } catch (err) {
+      setActionFeedback({
+        type: 'error',
+        message: `Bulk deletion failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsExecutingCloudAction(false);
+    }
+  };
 
   // Cloud Deletion Handlers
   const handleOpenDeleteSingle = (coll: CloudCollectionType, docId: string, title: string) => {
@@ -2140,8 +2243,30 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                 </p>
               </div>
 
-              {/* Sub-Collection Switcher and Search */}
+              {/* Sub-Collection Filters, School Filter and Search */}
               <div className="flex items-center gap-2 flex-wrap">
+                {cloudActiveColl === 'personnel' && (
+                  <div className="flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-slate-400" />
+                    <select
+                      aria-label="Filter cloud personnel by school station"
+                      value={cloudSchoolFilter}
+                      onChange={(e) => {
+                        setCloudSchoolFilter(e.target.value);
+                        setCloudSelectedDocIds([]);
+                      }}
+                      className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 font-medium focus:ring-1 focus:ring-rose-600 focus:outline-none"
+                    >
+                      <option value="ALL">All Stations / Schools ({cloudPersonnelSchools.length})</option>
+                      {cloudPersonnelSchools.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
                   <input
@@ -2149,7 +2274,7 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                     placeholder="Search cloud records..."
                     value={cloudSearchTerm}
                     onChange={(e) => setCloudSearchTerm(e.target.value)}
-                    className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-rose-500 w-48 sm:w-60"
+                    className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-rose-500 w-44 sm:w-56"
                   />
                 </div>
 
@@ -2161,6 +2286,67 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                   <Trash2 className="w-3.5 h-3.5 text-rose-600" />
                   <span>Purge Entire /{cloudActiveColl}</span>
                 </button>
+              </div>
+            </div>
+
+            {/* Cloud Multi-Select Action Bar */}
+            <div className="px-6 py-2.5 bg-amber-50/70 border-b border-amber-200/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-amber-200 text-amber-900 font-bold rounded text-[11px]">
+                  Batch Cloud Actions
+                </span>
+                <span className="text-slate-700">
+                  {cloudSelectedDocIds.length > 0 ? (
+                    <>
+                      <strong className="text-slate-900">{cloudSelectedDocIds.length}</strong> record(s) selected
+                      {cloudActiveColl === 'personnel' && cloudSchoolFilter !== 'ALL' && (
+                        <span className="text-slate-500"> in {cloudSchoolFilter}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span>Select records below to perform multi-record cloud deletion</span>
+                  )}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleCloudSelectAll}
+                  className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded border border-slate-300 shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isAllCloudSelected ? (
+                    <>
+                      <CheckSquare className="w-3.5 h-3.5 text-rose-700" />
+                      <span>Deselect Filtered ({filteredCloudDocIds.length})</span>
+                    </>
+                  ) : (
+                    <>
+                      <Square className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Select All Filtered ({filteredCloudDocIds.length})</span>
+                    </>
+                  )}
+                </button>
+
+                {cloudSelectedDocIds.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setCloudSelectedDocIds([])}
+                      className="px-2 py-1 text-slate-500 hover:text-slate-800 font-medium cursor-pointer"
+                    >
+                      Clear Selection
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenBatchDelete}
+                      className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded shadow-xs flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete {cloudSelectedDocIds.length} from Firestore &amp; Local</span>
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -2177,7 +2363,9 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                   No documents found in cloud collection <code className="font-mono text-rose-600">/{cloudActiveColl}</code>.
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  {cloudSearchTerm ? 'Try adjusting your search keywords.' : 'The collection in Firestore is currently empty.'}
+                  {cloudSearchTerm || cloudSchoolFilter !== 'ALL'
+                    ? 'Try adjusting your school filter or search keywords.'
+                    : 'The collection in Firestore is currently empty.'}
                 </p>
               </div>
             ) : (
@@ -2185,6 +2373,20 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
                     <tr>
+                      <th className="p-3 w-10 text-center">
+                        <button
+                          type="button"
+                          onClick={handleToggleCloudSelectAll}
+                          className="text-slate-500 hover:text-slate-900 focus:outline-none"
+                          title={isAllCloudSelected ? 'Deselect all' : 'Select all'}
+                        >
+                          {isAllCloudSelected ? (
+                            <CheckSquare className="w-4 h-4 text-rose-700 inline" />
+                          ) : (
+                            <Square className="w-4 h-4 inline" />
+                          )}
+                        </button>
+                      </th>
                       <th className="p-3 w-40">Document ID</th>
                       <th className="p-3">Record Details / Summary</th>
                       <th className="p-3 w-44">Last Updated</th>
@@ -2192,32 +2394,53 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-900">
-                    {filteredCloudRecords.map((rec) => (
-                      <tr key={rec.id} className="hover:bg-rose-50/30 transition">
-                        <td className="p-3 font-mono text-[11px] font-bold text-slate-800 whitespace-nowrap">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
-                            {rec.id}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <div className="font-bold text-slate-900 text-xs">{rec.title}</div>
-                          <div className="text-[11px] text-slate-500 mt-0.5">{rec.subtitle}</div>
-                        </td>
-                        <td className="p-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
-                          {rec.updatedAt ? new Date(rec.updatedAt).toLocaleString('en-PH') : 'N/A'}
-                        </td>
-                        <td className="p-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDeleteSingle(cloudActiveColl, rec.id, rec.title)}
-                            className="px-2.5 py-1 bg-white hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 ml-auto cursor-pointer shadow-xs"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Delete from Cloud</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredCloudRecords.map((rec) => {
+                      const isSelected = cloudSelectedDocIds.includes(rec.id);
+                      return (
+                        <tr
+                          key={rec.id}
+                          className={`transition ${
+                            isSelected ? 'bg-amber-50/70' : 'hover:bg-rose-50/30'
+                          }`}
+                        >
+                          <td className="p-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCloudSelect(rec.id)}
+                              className="text-slate-500 hover:text-slate-900 focus:outline-none"
+                            >
+                              {isSelected ? (
+                                <CheckSquare className="w-4 h-4 text-amber-700 inline" />
+                              ) : (
+                                <Square className="w-4 h-4 inline text-slate-400" />
+                              )}
+                            </button>
+                          </td>
+                          <td className="p-3 font-mono text-[11px] font-bold text-slate-800 whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                              {rec.id}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div className="font-bold text-slate-900 text-xs">{rec.title}</div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">{rec.subtitle}</div>
+                          </td>
+                          <td className="p-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                            {rec.updatedAt ? new Date(rec.updatedAt).toLocaleString('en-PH') : 'N/A'}
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteSingle(cloudActiveColl, rec.id, rec.title)}
+                              className="px-2.5 py-1 bg-white hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 ml-auto cursor-pointer shadow-xs"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Delete from Cloud</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2372,6 +2595,116 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
               >
                 Confirm Decline
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BATCH CLOUD DELETION CONFIRMATION MODAL */}
+      {cloudBatchDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border-2 border-rose-500 space-y-4 animate-scaleUp">
+            {/* Header */}
+            <div className="flex items-center gap-3 text-rose-600 pb-2 border-b border-rose-100">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  Batch Cloud Delete — {cloudSelectedDocIds.length} Document(s)
+                </h3>
+                <p className="text-[11px] text-rose-700 font-semibold uppercase tracking-wider">
+                  Firebase Collection: /{cloudActiveColl}
+                </p>
+              </div>
+            </div>
+
+            {/* Warning Details */}
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-950 space-y-2">
+              <p>
+                You are about to permanently delete <strong>{cloudSelectedDocIds.length}</strong> record(s) from Firebase Cloud Firestore collection <strong>/{cloudActiveColl}</strong>.
+              </p>
+              <label className="flex items-center gap-2 text-[11px] text-slate-700 font-medium cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={purgeLocalMirror}
+                  onChange={(e) => setPurgeLocalMirror(e.target.checked)}
+                  className="rounded text-rose-600"
+                />
+                <span>Also delete corresponding record(s) from local IndexedDB cache</span>
+              </label>
+            </div>
+
+            {/* Selected Documents Scrollable Preview */}
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-slate-700">
+                Selected Documents ({cloudSelectedDocIds.length}):
+              </span>
+              <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100 bg-slate-50 text-xs">
+                {cloudRecords
+                  .filter((r) => cloudSelectedDocIds.includes(r.id))
+                  .map((r) => (
+                    <div key={r.id} className="p-2 flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-slate-900">{r.title}</span>{' '}
+                        <span className="font-mono text-[10.5px] text-slate-500">({r.id})</span>
+                        <div className="text-[10px] text-slate-400">{r.subtitle}</div>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* Confirmation input */}
+            <div className="space-y-1.5 pt-1">
+              <label className="text-xs font-bold text-slate-800">
+                To confirm bulk deletion, type{' '}
+                <span className="font-mono text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 font-black">
+                  DELETE
+                </span>{' '}
+                below:
+              </label>
+              <input
+                type="text"
+                value={cloudBatchDeleteInput}
+                onChange={(e) => setCloudBatchDeleteInput(e.target.value)}
+                placeholder="Type DELETE"
+                className="w-full p-2.5 rounded-xl border border-slate-300 font-mono text-xs outline-none focus:ring-2 focus:ring-rose-600"
+                autoFocus
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isExecutingCloudAction}
+                onClick={() => {
+                  setCloudBatchDeleteModalOpen(false);
+                  setCloudBatchDeleteInput('');
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isExecutingCloudAction || cloudBatchDeleteInput.trim() !== 'DELETE'}
+                onClick={handleExecuteBatchCloudDelete}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isExecutingCloudAction ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting {cloudSelectedDocIds.length} from Cloud...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Batch Deletion</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
