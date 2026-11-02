@@ -263,51 +263,6 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({
                   </>
                 )}
               </button>
-
-              {/* Default Official Credentials Quick-Fill - Superadmin Only */}
-              <div className="pt-3 border-t border-slate-100 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
-                    Pre-Configured Official Account
-                  </span>
-                  <span className="text-[10px] text-amber-700 font-bold bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
-                    Superadmin Only
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginIdentifier('superadmin');
-                    setLoginPassword('password123');
-                  }}
-                  className="w-full p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50/80 border border-slate-200 hover:border-blue-400 transition text-left cursor-pointer group flex items-center justify-between shadow-xs"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-[#1e3a8a] text-white flex items-center justify-center shrink-0">
-                      <Shield className="w-4 h-4 text-amber-400" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 group-hover:text-blue-900 leading-tight">
-                        Division IT &amp; Systems Superadmin
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-mono">
-                        user: <span className="font-bold text-slate-800">superadmin</span> &bull; pass: <span className="font-bold text-slate-800">password123</span>
-                      </div>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-2.5 py-1 rounded-md shrink-0 group-hover:bg-blue-200 transition">
-                    Quick Fill
-                  </span>
-                </button>
-
-                <div className="p-2.5 rounded-lg bg-amber-50/80 border border-amber-200 text-[11px] text-amber-900 flex items-start gap-2 leading-relaxed">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>Superadmin Governance Policy:</strong> All Principal, AO II, and Staff accounts must register via "Create Account". Newly created accounts require Superadmin approval before portal sign in is unlocked.
-                  </span>
-                </div>
-              </div>
             </form>
           )}
 
