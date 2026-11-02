@@ -35,6 +35,23 @@
       },
       "required": ["id", "schoolStation", "positionTitle"]
     },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Division circular or bulletin broadcast",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "targetRole": { "type": "string" },
+        "priority": { "type": "string" },
+        "author": { "type": "string" },
+        "authorRole": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "title", "content"]
+    },
     "AuditLog": {
       "title": "AuditLog",
       "description": "System event audit trail entry",
@@ -60,6 +77,10 @@
     "/personnel/{personnelId}": {
       "schema": "Personnel",
       "description": "Personnel records across school stations"
+    },
+    "/announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Broadcast announcements across the division"
     },
     "/audit_logs/{logId}": {
       "schema": "AuditLog",

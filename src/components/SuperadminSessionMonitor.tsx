@@ -29,6 +29,12 @@ import {
   ToggleLeft,
   ToggleRight,
   TrendingUp,
+  Database,
+  Flame,
+  CheckSquare,
+  Square,
+  Layers,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   getAuditLogs,
@@ -50,7 +56,18 @@ import {
   UserSession,
   School,
 } from '../types';
-import { pullAllCloudData, publishAllLocalToCloud } from '../services/cloudSyncService';
+import {
+  pullAllCloudData,
+  publishAllLocalToCloud,
+  fetchCloudMetrics,
+  fetchCloudCollectionRecords,
+  deleteCloudDocument,
+  purgeCloudCollection,
+  purgeEntireCloudDatabase,
+  CloudCollectionType,
+  CloudRecordSummary,
+  CloudCollectionMetrics,
+} from '../services/cloudSyncService';
 import {
   getAllRegisteredUsers,
   approveUserAccount,
@@ -75,7 +92,8 @@ type SuperadminSubTab =
   | 'DATA_TRANSFER'
   | 'ANNOUNCEMENTS'
   | 'AUDIT_LOGS'
-  | 'SESSIONS_CLOUD';
+  | 'SESSIONS_CLOUD'
+  | 'CLOUD_DATABASE';
 
 export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> = ({
   currentUser,
@@ -120,6 +138,65 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
   const [severityFilter, setSeverityFilter] = useState<'ALL' | AuditSeverity>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [activeSessions, setActiveSessions] = useState<UserSession[]>([]);
+
+  // Cloud Database Management & Deletion State
+  const [cloudMetrics, setCloudMetrics] = useState<CloudCollectionMetrics>({
+    personnel: 0,
+    schools: 0,
+    announcements: 0,
+    audit_logs: 0,
+  });
+  const [cloudActiveColl, setCloudActiveColl] = useState<CloudCollectionType>('personnel');
+  const [cloudRecords, setCloudRecords] = useState<CloudRecordSummary[]>([]);
+  const [cloudRecordsLoading, setCloudRecordsLoading] = useState(false);
+  const [cloudSearchTerm, setCloudSearchTerm] = useState('');
+  const [isExecutingCloudAction, setIsExecutingCloudAction] = useState(false);
+  const [purgeLocalMirror, setPurgeLocalMirror] = useState(true);
+
+  // Deletion Confirmation Modal State
+  const [cloudDeleteModal, setCloudDeleteModal] = useState<{
+    open: boolean;
+    mode: 'SINGLE' | 'COLLECTION' | 'FULL_DATABASE';
+    collection?: CloudCollectionType;
+    docId?: string;
+    title?: string;
+    requiredPhrase: string;
+  } | null>(null);
+  const [cloudDeleteInput, setCloudDeleteInput] = useState('');
+
+  // Fetch live counts from Firestore
+  const loadCloudMetrics = useCallback(async () => {
+    try {
+      const m = await fetchCloudMetrics();
+      setCloudMetrics(m);
+    } catch (err) {
+      console.warn('Failed to load cloud metrics:', err);
+    }
+  }, []);
+
+  // Fetch live records for current collection from Firestore
+  const loadCloudRecords = useCallback(async (coll: CloudCollectionType) => {
+    setCloudRecordsLoading(true);
+    try {
+      const recs = await fetchCloudCollectionRecords(coll);
+      setCloudRecords(recs);
+    } catch (err) {
+      console.warn(`Failed to load cloud records for ${coll}:`, err);
+      setCloudRecords([]);
+    } finally {
+      setCloudRecordsLoading(false);
+    }
+  }, []);
+
+  // Refresh cloud records when switching subtabs or active collection
+  useEffect(() => {
+    if (activeSubTab === 'CLOUD_DATABASE' || activeSubTab === 'SESSIONS_CLOUD') {
+      loadCloudMetrics();
+    }
+    if (activeSubTab === 'CLOUD_DATABASE') {
+      loadCloudRecords(cloudActiveColl);
+    }
+  }, [activeSubTab, cloudActiveColl, loadCloudMetrics, loadCloudRecords]);
 
   // Load registered users
   const loadUsers = useCallback(async () => {
@@ -285,6 +362,120 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
       return matchSeverity && matchCat && matchSearch;
     });
   }, [auditLogs, severityFilter, categoryFilter, logSearchTerm]);
+
+  // Filtered cloud documents for inspector
+  const filteredCloudRecords = useMemo(() => {
+    if (!cloudSearchTerm.trim()) return cloudRecords;
+    const term = cloudSearchTerm.toLowerCase();
+    return cloudRecords.filter(
+      (r) =>
+        r.id.toLowerCase().includes(term) ||
+        r.title.toLowerCase().includes(term) ||
+        r.subtitle.toLowerCase().includes(term)
+    );
+  }, [cloudRecords, cloudSearchTerm]);
+
+  // Cloud Deletion Handlers
+  const handleOpenDeleteSingle = (coll: CloudCollectionType, docId: string, title: string) => {
+    setCloudDeleteInput('');
+    setCloudDeleteModal({
+      open: true,
+      mode: 'SINGLE',
+      collection: coll,
+      docId,
+      title,
+      requiredPhrase: 'DELETE',
+    });
+  };
+
+  const handleOpenPurgeCollection = (coll: CloudCollectionType) => {
+    setCloudDeleteInput('');
+    setCloudDeleteModal({
+      open: true,
+      mode: 'COLLECTION',
+      collection: coll,
+      title: `All documents in "${coll}" collection`,
+      requiredPhrase: `PURGE ${coll.toUpperCase()}`,
+    });
+  };
+
+  const handleOpenPurgeAllDatabase = () => {
+    setCloudDeleteInput('');
+    setCloudDeleteModal({
+      open: true,
+      mode: 'FULL_DATABASE',
+      title: 'Complete Division Cloud Database (All Collections)',
+      requiredPhrase: 'PURGE DIVISION CLOUD',
+    });
+  };
+
+  const handleExecuteCloudDeleteAction = async () => {
+    if (!cloudDeleteModal) return;
+    if (cloudDeleteInput.trim() !== cloudDeleteModal.requiredPhrase) {
+      setActionFeedback({
+        type: 'error',
+        message: `Confirmation text mismatch! Please type exactly: "${cloudDeleteModal.requiredPhrase}"`,
+      });
+      return;
+    }
+
+    setIsExecutingCloudAction(true);
+    setActionFeedback(null);
+
+    try {
+      if (cloudDeleteModal.mode === 'SINGLE' && cloudDeleteModal.collection && cloudDeleteModal.docId) {
+        await deleteCloudDocument(
+          cloudDeleteModal.collection,
+          cloudDeleteModal.docId,
+          currentUser.fullName || currentUser.username || 'Superadmin',
+          purgeLocalMirror
+        );
+        setActionFeedback({
+          type: 'success',
+          message: `Successfully deleted document "${cloudDeleteModal.docId}" from Firestore (${cloudDeleteModal.collection})!`,
+        });
+      } else if (cloudDeleteModal.mode === 'COLLECTION' && cloudDeleteModal.collection) {
+        const count = await purgeCloudCollection(
+          cloudDeleteModal.collection,
+          currentUser.fullName || currentUser.username || 'Superadmin',
+          purgeLocalMirror
+        );
+        setActionFeedback({
+          type: 'success',
+          message: `Successfully purged ${count} document(s) from collection "${cloudDeleteModal.collection}" in Firestore!`,
+        });
+      } else if (cloudDeleteModal.mode === 'FULL_DATABASE') {
+        const res = await purgeEntireCloudDatabase(
+          currentUser.fullName || currentUser.username || 'Superadmin',
+          purgeLocalMirror
+        );
+        setActionFeedback({
+          type: 'success',
+          message: `Factory reset complete! Purged ${res.personnelDeleted} personnel, ${res.schoolsDeleted} schools, ${res.announcementsDeleted} announcements, and ${res.auditLogsDeleted} logs from Firestore.`,
+        });
+      }
+
+      setCloudDeleteModal(null);
+      setCloudDeleteInput('');
+      await loadCloudMetrics();
+      if (cloudDeleteModal.collection) {
+        await loadCloudRecords(cloudDeleteModal.collection);
+      } else {
+        await loadCloudRecords(cloudActiveColl);
+      }
+      await loadLogs();
+      if (onRefreshSchools) await onRefreshSchools();
+      if (onRefreshRoster) await onRefreshRoster();
+      setTimeout(() => setActionFeedback(null), 5000);
+    } catch (err) {
+      setActionFeedback({
+        type: 'error',
+        message: `Deletion failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsExecutingCloudAction(false);
+    }
+  };
 
   // User Actions
   const handleApprove = async (user: User) => {
@@ -662,6 +853,22 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
           >
             <Activity className="w-4 h-4 text-emerald-600" />
             <span>Live Telemetry &amp; Schools Cloud</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('CLOUD_DATABASE')}
+            className={`pb-3 px-3.5 border-b-2 flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'CLOUD_DATABASE'
+                ? 'border-rose-600 text-rose-700'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Database className="w-4 h-4 text-rose-600" />
+            <span>Cloud Database &amp; Data Purge</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">
+              Firestore
+            </span>
           </button>
         </div>
       </div>
@@ -1577,6 +1784,31 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                 No schools registered yet.
               </div>
             )}
+            {/* Quick banner to jump to Cloud Database & Data Purge */}
+            <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-slate-900 to-rose-950 border border-rose-900/40 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-rose-600/30 border border-rose-500/50 flex items-center justify-center shrink-0">
+                  <Flame className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>Firebase Cloud Data Governance &amp; Purge Control</span>
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-rose-500 text-white font-mono">Superadmin Only</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Delete outdated personnel, prune announcements, wipe invalid schools, or perform a complete cloud database reset.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('CLOUD_DATABASE')}
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-sm"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>Open Cloud Data Purge Center</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1704,6 +1936,403 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB 6: CLOUD DATABASE & DATA PURGE HUB */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'CLOUD_DATABASE' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Top Panel */}
+          <div className="bg-gradient-to-r from-slate-900 via-rose-950 to-slate-900 rounded-xl p-6 border border-rose-900/50 text-white shadow-xl">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-rose-600/30 border border-rose-500/50 flex items-center justify-center">
+                    <Database className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <h3 className="text-base font-black tracking-wide text-white flex items-center gap-2">
+                    <span>Firebase Firestore Cloud Data Governance</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] bg-rose-600 text-white font-mono uppercase tracking-wider font-bold">
+                      Superadmin Exclusive
+                    </span>
+                  </h3>
+                </div>
+                <p className="text-xs text-rose-200/80 max-w-3xl leading-relaxed">
+                  Direct administrative control over Google Cloud Firestore database (<code className="font-mono text-amber-300">ai-studio-administrativeof-...</code>). Inspect cloud documents, safely delete individual invalid records, or purge entire collections with cryptographic audit verification.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    loadCloudMetrics();
+                    loadCloudRecords(cloudActiveColl);
+                  }}
+                  disabled={cloudRecordsLoading}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${cloudRecordsLoading ? 'animate-spin text-amber-400' : 'text-slate-400'}`} />
+                  <span>Refresh Cloud Data</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOpenPurgeAllDatabase}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md shadow-rose-950 border border-rose-500"
+                >
+                  <Flame className="w-4 h-4 text-amber-300 animate-pulse" />
+                  <span>Factory Reset Cloud Database</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Cloud Collection Metrics Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+              {/* Personnel */}
+              <div
+                onClick={() => setCloudActiveColl('personnel')}
+                className={`p-4 rounded-xl border transition cursor-pointer ${
+                  cloudActiveColl === 'personnel'
+                    ? 'bg-rose-900/40 border-rose-500 shadow-md ring-1 ring-rose-500/50'
+                    : 'bg-slate-800/60 border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-300">Personnel Records</span>
+                  <span className="text-[10px] font-mono text-slate-400">/personnel</span>
+                </div>
+                <div className="mt-2 text-2xl font-black text-white">
+                  {cloudMetrics.personnel}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-slate-700/50">
+                  <span className="text-[11px] text-rose-300 font-medium">Click to inspect</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenPurgeCollection('personnel');
+                    }}
+                    className="p-1 rounded text-rose-400 hover:text-white hover:bg-rose-600/50 transition text-[10px] font-bold flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Purge</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Schools */}
+              <div
+                onClick={() => setCloudActiveColl('schools')}
+                className={`p-4 rounded-xl border transition cursor-pointer ${
+                  cloudActiveColl === 'schools'
+                    ? 'bg-rose-900/40 border-rose-500 shadow-md ring-1 ring-rose-500/50'
+                    : 'bg-slate-800/60 border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-300">School Profiles</span>
+                  <span className="text-[10px] font-mono text-slate-400">/schools</span>
+                </div>
+                <div className="mt-2 text-2xl font-black text-white">
+                  {cloudMetrics.schools}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-slate-700/50">
+                  <span className="text-[11px] text-rose-300 font-medium">Click to inspect</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenPurgeCollection('schools');
+                    }}
+                    className="p-1 rounded text-rose-400 hover:text-white hover:bg-rose-600/50 transition text-[10px] font-bold flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Purge</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Announcements */}
+              <div
+                onClick={() => setCloudActiveColl('announcements')}
+                className={`p-4 rounded-xl border transition cursor-pointer ${
+                  cloudActiveColl === 'announcements'
+                    ? 'bg-rose-900/40 border-rose-500 shadow-md ring-1 ring-rose-500/50'
+                    : 'bg-slate-800/60 border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-300">Announcements</span>
+                  <span className="text-[10px] font-mono text-slate-400">/announcements</span>
+                </div>
+                <div className="mt-2 text-2xl font-black text-white">
+                  {cloudMetrics.announcements}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-slate-700/50">
+                  <span className="text-[11px] text-rose-300 font-medium">Click to inspect</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenPurgeCollection('announcements');
+                    }}
+                    className="p-1 rounded text-rose-400 hover:text-white hover:bg-rose-600/50 transition text-[10px] font-bold flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Purge</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Audit Logs */}
+              <div
+                onClick={() => setCloudActiveColl('audit_logs')}
+                className={`p-4 rounded-xl border transition cursor-pointer ${
+                  cloudActiveColl === 'audit_logs'
+                    ? 'bg-rose-900/40 border-rose-500 shadow-md ring-1 ring-rose-500/50'
+                    : 'bg-slate-800/60 border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-300">Division Audit Logs</span>
+                  <span className="text-[10px] font-mono text-slate-400">/audit_logs</span>
+                </div>
+                <div className="mt-2 text-2xl font-black text-white">
+                  {cloudMetrics.audit_logs}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-slate-700/50">
+                  <span className="text-[11px] text-rose-300 font-medium">Click to inspect</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenPurgeCollection('audit_logs');
+                    }}
+                    className="p-1 rounded text-rose-400 hover:text-white hover:bg-rose-600/50 transition text-[10px] font-bold flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Purge</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Collection Document Explorer */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            {/* Explorer Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-slate-900">
+                    Cloud Collection: <span className="font-mono text-rose-700">/{cloudActiveColl}</span>
+                  </h4>
+                  <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700 font-bold">
+                    {filteredCloudRecords.length} records found
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Select and delete individual records directly from Firebase Firestore.
+                </p>
+              </div>
+
+              {/* Sub-Collection Switcher and Search */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search cloud records..."
+                    value={cloudSearchTerm}
+                    onChange={(e) => setCloudSearchTerm(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-rose-500 w-48 sm:w-60"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenPurgeCollection(cloudActiveColl)}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Purge Entire /{cloudActiveColl}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Document Listing */}
+            {cloudRecordsLoading ? (
+              <div className="p-16 text-center text-slate-500 space-y-3">
+                <RefreshCw className="w-8 h-8 text-rose-600 animate-spin mx-auto" />
+                <p className="text-xs font-semibold">Querying live records from Firebase Firestore...</p>
+              </div>
+            ) : filteredCloudRecords.length === 0 ? (
+              <div className="p-16 text-center space-y-2">
+                <Database className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-xs font-semibold text-slate-600">
+                  No documents found in cloud collection <code className="font-mono text-rose-600">/{cloudActiveColl}</code>.
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  {cloudSearchTerm ? 'Try adjusting your search keywords.' : 'The collection in Firestore is currently empty.'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 overflow-x-auto max-h-[600px]">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="p-3 w-40">Document ID</th>
+                      <th className="p-3">Record Details / Summary</th>
+                      <th className="p-3 w-44">Last Updated</th>
+                      <th className="p-3 w-36 text-right">Cloud Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-900">
+                    {filteredCloudRecords.map((rec) => (
+                      <tr key={rec.id} className="hover:bg-rose-50/30 transition">
+                        <td className="p-3 font-mono text-[11px] font-bold text-slate-800 whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                            {rec.id}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <div className="font-bold text-slate-900 text-xs">{rec.title}</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">{rec.subtitle}</div>
+                        </td>
+                        <td className="p-3 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                          {rec.updatedAt ? new Date(rec.updatedAt).toLocaleString('en-PH') : 'N/A'}
+                        </td>
+                        <td className="p-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDeleteSingle(cloudActiveColl, rec.id, rec.title)}
+                            className="px-2.5 py-1 bg-white hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 ml-auto cursor-pointer shadow-xs"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Delete from Cloud</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CLOUD DATA DELETION CONFIRMATION SAFETY MODAL */}
+      {cloudDeleteModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border-2 border-rose-500 space-y-4 animate-scaleUp">
+            {/* Header */}
+            <div className="flex items-center gap-3 text-rose-600 pb-2 border-b border-rose-100">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  {cloudDeleteModal.mode === 'SINGLE' && 'Delete Cloud Firestore Document'}
+                  {cloudDeleteModal.mode === 'COLLECTION' && `Purge Firestore Collection: /${cloudDeleteModal.collection}`}
+                  {cloudDeleteModal.mode === 'FULL_DATABASE' && 'CRITICAL: Factory Reset Division Cloud'}
+                </h3>
+                <p className="text-[11px] text-rose-700 font-semibold uppercase tracking-wider">
+                  Irreversible Cloud Storage Deletion
+                </p>
+              </div>
+            </div>
+
+            {/* Warning details */}
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-950 space-y-2">
+              <p>
+                {cloudDeleteModal.mode === 'SINGLE' && (
+                  <>
+                    You are about to permanently delete document <strong>&quot;{cloudDeleteModal.docId}&quot;</strong> ({cloudDeleteModal.title}) from the Firebase Firestore collection <strong>/{cloudDeleteModal.collection}</strong>.
+                  </>
+                )}
+                {cloudDeleteModal.mode === 'COLLECTION' && (
+                  <>
+                    You are about to purge <strong>ALL</strong> documents in the <strong>/{cloudDeleteModal.collection}</strong> collection from Firebase Firestore. This will immediately affect all connected devices across the Division.
+                  </>
+                )}
+                {cloudDeleteModal.mode === 'FULL_DATABASE' && (
+                  <>
+                    <strong>WARNING:</strong> You are executing a complete factory wipe of the Firebase Firestore cloud database. All personnel records, school profiles, announcements, and cloud logs will be erased permanently!
+                  </>
+                )}
+              </p>
+
+              {/* Local Mirror Checkbox */}
+              <label className="flex items-center gap-2 pt-1 font-semibold text-slate-900 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={purgeLocalMirror}
+                  onChange={(e) => setPurgeLocalMirror(e.target.checked)}
+                  className="rounded text-rose-600 focus:ring-rose-500 w-4 h-4 cursor-pointer"
+                />
+                <span>Also delete corresponding record(s) from local IndexedDB cache</span>
+              </label>
+            </div>
+
+            {/* Confirmation typing requirement */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-800">
+                To confirm deletion, please type exactly{' '}
+                <span className="font-mono text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 font-black">
+                  {cloudDeleteModal.requiredPhrase}
+                </span>{' '}
+                below:
+              </label>
+              <input
+                type="text"
+                value={cloudDeleteInput}
+                onChange={(e) => setCloudDeleteInput(e.target.value)}
+                placeholder={`Type "${cloudDeleteModal.requiredPhrase}"`}
+                className="w-full p-2.5 rounded-xl border border-slate-300 font-mono text-xs outline-none focus:ring-2 focus:ring-rose-600 focus:border-rose-600"
+                autoFocus
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isExecutingCloudAction}
+                onClick={() => {
+                  setCloudDeleteModal(null);
+                  setCloudDeleteInput('');
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  isExecutingCloudAction ||
+                  cloudDeleteInput.trim() !== cloudDeleteModal.requiredPhrase
+                }
+                onClick={handleExecuteCloudDeleteAction}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isExecutingCloudAction ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting from Cloud...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm &amp; Execute Deletion</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

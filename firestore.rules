@@ -16,6 +16,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Division Broadcast Announcements
+    match /announcements/{announcementId} {
+      allow read, write: if true;
+    }
+
     // Division Audit Logs
     match /audit_logs/{logId} {
       allow read, write: if true;

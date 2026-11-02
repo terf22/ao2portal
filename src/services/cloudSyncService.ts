@@ -1,10 +1,11 @@
 /**
- * Cloud Sync Service: Real-time Firestore synchronization for DepEd School Profiles,
- * Clusters, and Personnel across multiple devices and browsers.
+ * Cloud Sync Service: Real-time Firestore synchronization and administration
+ * for DepEd School Profiles, Clusters, Personnel, Announcements, and Audit Logs.
  * 
  * Local-First Architecture:
- * Reads and rapid operations use IndexedDB (Dexie) for zero-latency offline operation.
- * Mutations are automatically queued and synced to Firestore in real-time.
+ * - Offline-first IndexedDB (Dexie) for zero-latency local operations.
+ * - Real-time sync & cloud governance via Firestore.
+ * - Comprehensive administrative deletion tooling for Superadmin.
  */
 
 import {
@@ -19,26 +20,79 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { firebaseApp } from '../config/googleAuth';
+import { firebaseApp, auth } from '../config/googleAuth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 import { db, addAuditLog } from '../db/dexie';
-import { School, Personnel, SyncQueueItem, AuditLog } from '../types';
+import { School, Personnel, SyncQueueItem, AuditLog, Announcement } from '../types';
 
 // Safely initialize Firestore with the provisioned database ID
 const dbId = (firebaseConfigJson as { firestoreDatabaseId?: string }).firestoreDatabaseId;
 export const firestoreDb = getFirestore(firebaseApp, dbId || undefined);
 
+export enum OperationType {
+  CREATE = 'create',
+  READ = 'read',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  BATCH = 'batch',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map((p) => ({
+        providerId: p.providerId,
+        email: p.email,
+      })) || [],
+    },
+    operationType,
+    path,
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 /**
- * Health check on app startup (as required by Firestore integration best practices)
+ * Health check on app startup
  */
 export async function testFirestoreConnection(): Promise<boolean> {
+  const path = 'test/connection';
   try {
     await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
     return true;
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes('the client is offline')) {
       console.warn('Firestore client is currently offline. Operating in local-first mode.');
+      return false;
     }
+    // Non-fatal warning on health check
+    console.warn('Firestore connection health check returned notice:', err);
     return false;
   }
 }
@@ -66,26 +120,31 @@ export async function syncQueueItemToFirestore(item: SyncQueueItem): Promise<boo
       const id = payload?.id;
       if (!id) return true;
 
-      if (item.action === 'DELETE') {
-        await deleteDoc(doc(firestoreDb, 'schools', String(id)));
-      } else {
-        const clean = sanitizeForFirestore({
-          id: String(id),
-          name: payload.name || '',
-          district: payload.district || '',
-          division: payload.division || '',
-          region: payload.region || '',
-          schoolHeadName: payload.schoolHeadName || '',
-          schoolHeadPosition: payload.schoolHeadPosition || '',
-          address: payload.address || '',
-          contactEmail: payload.contactEmail || '',
-          contactNumber: payload.contactNumber || '',
-          isPrimary: !!payload.isPrimary,
-          updatedAt: new Date().toISOString(),
-        });
-        await setDoc(doc(firestoreDb, 'schools', String(id)), clean, { merge: true });
+      const path = `schools/${id}`;
+      try {
+        if (item.action === 'DELETE') {
+          await deleteDoc(doc(firestoreDb, 'schools', String(id)));
+        } else {
+          const clean = sanitizeForFirestore({
+            id: String(id),
+            name: payload.name || '',
+            district: payload.district || '',
+            division: payload.division || '',
+            region: payload.region || '',
+            schoolHeadName: payload.schoolHeadName || '',
+            schoolHeadPosition: payload.schoolHeadPosition || '',
+            address: payload.address || '',
+            contactEmail: payload.contactEmail || '',
+            contactNumber: payload.contactNumber || '',
+            isPrimary: !!payload.isPrimary,
+            updatedAt: new Date().toISOString(),
+          });
+          await setDoc(doc(firestoreDb, 'schools', String(id)), clean, { merge: true });
+        }
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, item.action === 'DELETE' ? OperationType.DELETE : OperationType.WRITE, path);
       }
-      return true;
     }
 
     if (item.table === 'personnel') {
@@ -93,28 +152,38 @@ export async function syncQueueItemToFirestore(item: SyncQueueItem): Promise<boo
       const id = payload?.id;
       if (!id) return true;
 
-      if (item.action === 'DELETE') {
-        await deleteDoc(doc(firestoreDb, 'personnel', String(id)));
-      } else {
-        const clean = sanitizeForFirestore({
-          ...payload,
-          id: String(id),
-          updatedAt: new Date().toISOString(),
-        });
-        await setDoc(doc(firestoreDb, 'personnel', String(id)), clean, { merge: true });
+      const path = `personnel/${id}`;
+      try {
+        if (item.action === 'DELETE') {
+          await deleteDoc(doc(firestoreDb, 'personnel', String(id)));
+        } else {
+          const clean = sanitizeForFirestore({
+            ...payload,
+            id: String(id),
+            updatedAt: new Date().toISOString(),
+          });
+          await setDoc(doc(firestoreDb, 'personnel', String(id)), clean, { merge: true });
+        }
+        return true;
+      } catch (err) {
+        handleFirestoreError(err, item.action === 'DELETE' ? OperationType.DELETE : OperationType.WRITE, path);
       }
-      return true;
     }
 
     if (item.table === 'audit_logs') {
       const payload = item.payload as Partial<AuditLog>;
       const id = payload?.id;
       if (id) {
-        const clean = sanitizeForFirestore({
-          ...payload,
-          id: String(id),
-        });
-        await setDoc(doc(firestoreDb, 'audit_logs', String(id)), clean, { merge: true });
+        const path = `audit_logs/${id}`;
+        try {
+          const clean = sanitizeForFirestore({
+            ...payload,
+            id: String(id),
+          });
+          await setDoc(doc(firestoreDb, 'audit_logs', String(id)), clean, { merge: true });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, path);
+        }
       }
       return true;
     }
@@ -128,7 +197,6 @@ export async function syncQueueItemToFirestore(item: SyncQueueItem): Promise<boo
 
 /**
  * Subscribe in real-time to all schools registered in the Division.
- * Automatically synchronizes cloud schools into local IndexedDB and triggers listener callback.
  */
 export function subscribeToCloudSchools(
   onSchoolsUpdated: (schools: School[]) => void
@@ -144,7 +212,6 @@ export function subscribeToCloudSchools(
           schoolsList.push(data);
         });
 
-        // Mirror cloud schools into local IndexedDB cache
         if (schoolsList.length > 0) {
           try {
             await db.schools.bulkPut(schoolsList);
@@ -167,7 +234,6 @@ export function subscribeToCloudSchools(
 
 /**
  * Subscribe in real-time to personnel records.
- * Particularly useful for Superadmin monitoring Division-wide roster updates.
  */
 export function subscribeToCloudPersonnel(
   onPersonnelUpdated: (personnel: Personnel[]) => void
@@ -183,7 +249,6 @@ export function subscribeToCloudPersonnel(
           list.push(data);
         });
 
-        // Mirror cloud personnel into local IndexedDB cache
         if (list.length > 0) {
           try {
             await db.personnel.bulkPut(list);
@@ -205,12 +270,16 @@ export function subscribeToCloudPersonnel(
 }
 
 /**
- * Publish all local school profiles and personnel to the Firestore cloud database
- * so other computers/browsers in the Division immediately see them.
+ * Publish all local school profiles, personnel, and announcements to the Firestore cloud database
  */
-export async function publishAllLocalToCloud(): Promise<{ schoolsSynced: number; personnelSynced: number }> {
+export async function publishAllLocalToCloud(): Promise<{
+  schoolsSynced: number;
+  personnelSynced: number;
+  announcementsSynced: number;
+}> {
   let schoolsSynced = 0;
   let personnelSynced = 0;
+  let announcementsSynced = 0;
 
   try {
     const localSchools = await db.schools.toArray();
@@ -248,33 +317,52 @@ export async function publishAllLocalToCloud(): Promise<{ schoolsSynced: number;
       }
     }
 
-    if (schoolsSynced > 0 || personnelSynced > 0) {
+    const localAnnouncements = await db.announcements.toArray();
+    for (const a of localAnnouncements) {
+      if (a.id) {
+        const clean = sanitizeForFirestore({
+          ...a,
+          id: String(a.id),
+        });
+        await setDoc(doc(firestoreDb, 'announcements', String(a.id)), clean, { merge: true });
+        announcementsSynced++;
+      }
+    }
+
+    if (schoolsSynced > 0 || personnelSynced > 0 || announcementsSynced > 0) {
       await addAuditLog(
         'Cloud Sync Engine',
         'System',
         'CLOUD_SYNC',
         'FULL_PUBLISH',
-        `Published ${schoolsSynced} schools and ${personnelSynced} personnel records to Division Cloud.`
+        `Published ${schoolsSynced} schools, ${personnelSynced} personnel, and ${announcementsSynced} announcements to Division Cloud.`
       );
     }
   } catch (err) {
     console.error('Failed to publish local records to cloud:', err);
+    throw err;
   }
 
-  return { schoolsSynced, personnelSynced };
+  return { schoolsSynced, personnelSynced, announcementsSynced };
 }
 
 /**
- * Pull all schools and personnel from Firestore into local IndexedDB
+ * Pull all schools, personnel, and announcements from Firestore into local IndexedDB
  */
-export async function pullAllCloudData(): Promise<{ schoolsCount: number; personnelCount: number }> {
+export async function pullAllCloudData(): Promise<{
+  schoolsCount: number;
+  personnelCount: number;
+  announcementsCount: number;
+}> {
   let schoolsCount = 0;
   let personnelCount = 0;
+  let announcementsCount = 0;
 
   try {
-    const [schoolsSnap, personnelSnap] = await Promise.all([
+    const [schoolsSnap, personnelSnap, annSnap] = await Promise.all([
       getDocs(collection(firestoreDb, 'schools')),
       getDocs(collection(firestoreDb, 'personnel')),
+      getDocs(collection(firestoreDb, 'announcements')),
     ]);
 
     const cloudSchools: School[] = [];
@@ -287,6 +375,11 @@ export async function pullAllCloudData(): Promise<{ schoolsCount: number; person
       cloudPersonnel.push(d.data() as Personnel);
     });
 
+    const cloudAnn: Announcement[] = [];
+    annSnap.forEach((d) => {
+      cloudAnn.push(d.data() as Announcement);
+    });
+
     if (cloudSchools.length > 0) {
       await db.schools.bulkPut(cloudSchools);
       schoolsCount = cloudSchools.length;
@@ -296,9 +389,253 @@ export async function pullAllCloudData(): Promise<{ schoolsCount: number; person
       await db.personnel.bulkPut(cloudPersonnel);
       personnelCount = cloudPersonnel.length;
     }
+
+    if (cloudAnn.length > 0) {
+      await db.announcements.bulkPut(cloudAnn);
+      announcementsCount = cloudAnn.length;
+    }
   } catch (err) {
     console.warn('Failed to pull cloud data into local database:', err);
   }
 
-  return { schoolsCount, personnelCount };
+  return { schoolsCount, personnelCount, announcementsCount };
+}
+
+// =========================================================================
+// SUPERADMIN FIREBASE CLOUD DELETION & PURGE OPERATIONS
+// =========================================================================
+
+export type CloudCollectionType = 'personnel' | 'schools' | 'announcements' | 'audit_logs';
+
+export interface CloudRecordSummary {
+  id: string;
+  title: string;
+  subtitle: string;
+  updatedAt?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface CloudCollectionMetrics {
+  personnel: number;
+  schools: number;
+  announcements: number;
+  audit_logs: number;
+}
+
+/**
+ * Query live document counts across all cloud collections in Firestore
+ */
+export async function fetchCloudMetrics(): Promise<CloudCollectionMetrics> {
+  const metrics: CloudCollectionMetrics = {
+    personnel: 0,
+    schools: 0,
+    announcements: 0,
+    audit_logs: 0,
+  };
+
+  try {
+    const [pSnap, sSnap, aSnap, lSnap] = await Promise.all([
+      getDocs(collection(firestoreDb, 'personnel')),
+      getDocs(collection(firestoreDb, 'schools')),
+      getDocs(collection(firestoreDb, 'announcements')),
+      getDocs(collection(firestoreDb, 'audit_logs')),
+    ]);
+
+    metrics.personnel = pSnap.size;
+    metrics.schools = sSnap.size;
+    metrics.announcements = aSnap.size;
+    metrics.audit_logs = lSnap.size;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, 'collections_count');
+  }
+
+  return metrics;
+}
+
+/**
+ * Fetch records from a specific cloud Firestore collection for inspection
+ */
+export async function fetchCloudCollectionRecords(
+  coll: CloudCollectionType
+): Promise<CloudRecordSummary[]> {
+  try {
+    const snap = await getDocs(collection(firestoreDb, coll));
+    const records: CloudRecordSummary[] = [];
+
+    snap.forEach((docSnap) => {
+      const data = docSnap.data() as Record<string, unknown>;
+      const id = docSnap.id;
+
+      let title = id;
+      let subtitle = '';
+      const updatedAt = (data.updatedAt as string) || (data.timestamp as string) || (data.createdAt as string);
+
+      if (coll === 'personnel') {
+        const p = data as unknown as Personnel;
+        title = `${p.lastName || ''}, ${p.firstName || ''} ${p.middleName || ''}`.trim() || (data.fullName as string) || id;
+        subtitle = `${p.positionTitle || 'Staff'} • SG-${p.salaryGrade || 0} • ${p.schoolStation || 'Station Unassigned'}`;
+      } else if (coll === 'schools') {
+        const s = data as unknown as School;
+        title = s.name || `School ID: ${id}`;
+        subtitle = `${s.district || 'District N/A'} • Head: ${s.schoolHeadName || 'Unassigned'}`;
+      } else if (coll === 'announcements') {
+        const a = data as unknown as Announcement;
+        title = a.title || 'Untitled Circular';
+        subtitle = `Target: ${a.targetRole || 'ALL'} • Priority: ${a.priority || 'NORMAL'} • By: ${a.author || 'Admin'}`;
+      } else if (coll === 'audit_logs') {
+        const l = data as unknown as AuditLog;
+        title = `[${l.category || 'LOG'}] ${l.action || 'EVENT'}`;
+        subtitle = `${l.actor || 'System'} (${l.role || ''}) • ${l.details || ''}`;
+      }
+
+      records.push({
+        id,
+        title,
+        subtitle,
+        updatedAt,
+        raw: data,
+      });
+    });
+
+    return records;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, coll);
+  }
+}
+
+/**
+ * Delete a specific individual document from Firebase Firestore
+ */
+export async function deleteCloudDocument(
+  coll: CloudCollectionType,
+  docId: string,
+  operatorUsername: string = 'Superadmin',
+  deleteFromLocal: boolean = false
+): Promise<boolean> {
+  const path = `${coll}/${docId}`;
+  try {
+    await deleteDoc(doc(firestoreDb, coll, docId));
+
+    // Optionally also purge from local IndexedDB cache
+    if (deleteFromLocal) {
+      try {
+        if (coll === 'personnel') await db.personnel.delete(docId);
+        else if (coll === 'schools') await db.schools.delete(docId);
+        else if (coll === 'announcements') await db.announcements.delete(docId);
+        else if (coll === 'audit_logs') await db.auditLogs.delete(docId);
+      } catch (localErr) {
+        console.warn('Local mirror deletion note:', localErr);
+      }
+    }
+
+    await addAuditLog(
+      operatorUsername,
+      'Superadmin',
+      'SECURITY',
+      'CLOUD_DOC_DELETE',
+      `Permanently deleted document "${docId}" from Firestore collection "${coll}" (Local purge: ${deleteFromLocal}).`,
+      'CRITICAL'
+    );
+
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+/**
+ * Purge all documents from a specific Firestore collection in batches
+ */
+export async function purgeCloudCollection(
+  coll: CloudCollectionType,
+  operatorUsername: string = 'Superadmin',
+  purgeLocal: boolean = false
+): Promise<number> {
+  let deletedCount = 0;
+  const path = coll;
+
+  try {
+    const snap = await getDocs(collection(firestoreDb, coll));
+    if (snap.empty) return 0;
+
+    // Batch delete in chunks of 400 (Firestore max batch limit is 500)
+    const docs = snap.docs;
+    const chunkSize = 400;
+
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const batch = writeBatch(firestoreDb);
+      for (const d of chunk) {
+        batch.delete(d.ref);
+      }
+      await batch.commit();
+      deletedCount += chunk.length;
+    }
+
+    // Optionally wipe local IndexedDB table as well
+    if (purgeLocal) {
+      try {
+        if (coll === 'personnel') await db.personnel.clear();
+        else if (coll === 'schools') await db.schools.clear();
+        else if (coll === 'announcements') await db.announcements.clear();
+        else if (coll === 'audit_logs') await db.auditLogs.clear();
+      } catch (localErr) {
+        console.warn('Local collection clear note:', localErr);
+      }
+    }
+
+    await addAuditLog(
+      operatorUsername,
+      'Superadmin',
+      'SECURITY',
+      'CLOUD_COLLECTION_PURGE',
+      `Superadmin purged ${deletedCount} documents from Firestore collection "${coll}" (Purged local: ${purgeLocal}).`,
+      'CRITICAL'
+    );
+
+    return deletedCount;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.BATCH, path);
+  }
+}
+
+/**
+ * Purge ENTIRE Firebase cloud database across all collections (Factory Reset)
+ */
+export async function purgeEntireCloudDatabase(
+  operatorUsername: string = 'Superadmin',
+  purgeLocal: boolean = false
+): Promise<{
+  personnelDeleted: number;
+  schoolsDeleted: number;
+  announcementsDeleted: number;
+  auditLogsDeleted: number;
+}> {
+  const result = {
+    personnelDeleted: 0,
+    schoolsDeleted: 0,
+    announcementsDeleted: 0,
+    auditLogsDeleted: 0,
+  };
+
+  try {
+    result.personnelDeleted = await purgeCloudCollection('personnel', operatorUsername, purgeLocal);
+    result.schoolsDeleted = await purgeCloudCollection('schools', operatorUsername, purgeLocal);
+    result.announcementsDeleted = await purgeCloudCollection('announcements', operatorUsername, purgeLocal);
+    result.auditLogsDeleted = await purgeCloudCollection('audit_logs', operatorUsername, purgeLocal);
+
+    await addAuditLog(
+      operatorUsername,
+      'Superadmin',
+      'SECURITY',
+      'CLOUD_DATABASE_PURGE_ALL',
+      `Complete Division Cloud wipe executed: ${result.personnelDeleted} personnel, ${result.schoolsDeleted} schools, ${result.announcementsDeleted} announcements, ${result.auditLogsDeleted} audit logs deleted from Firestore.`,
+      'CRITICAL'
+    );
+  } catch (err) {
+    console.error('Failed to purge complete cloud database:', err);
+    throw err;
+  }
+
+  return result;
 }
