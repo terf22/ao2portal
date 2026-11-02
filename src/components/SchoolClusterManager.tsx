@@ -251,6 +251,7 @@ export const SchoolClusterManager: React.FC<SchoolClusterManagerProps> = ({
       username: trimmedUsername,
       fullName: trimmedFullName,
       role: newUserRole,
+      status: currentUser.role === 'Superadmin' ? 'ACTIVE' : 'PENDING',
       passwordHash,
     };
 

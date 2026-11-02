@@ -30,14 +30,45 @@ export class AOIIDatabase extends Dexie {
       auditLogs: 'id, timestamp, category, severity',
       syncQueue: '++id, table, action, timestamp',
     });
+    this.version(3).stores({
+      users: 'id, username, role, status',
+      schools: 'id, name, district',
+      personnel: 'id, lastName, positionTitle, schoolId, schoolStation, updatedAt',
+      auditLogs: 'id, timestamp, category, severity',
+      syncQueue: '++id, table, action, timestamp',
+    });
   }
 }
 
 export const db = new AOIIDatabase();
 
-export const DEFAULT_SCHOOLS: School[] = [];
+export const DEFAULT_USERS: User[] = [
+  {
+    id: 'user_superadmin_default',
+    username: 'superadmin',
+    passwordHash: 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f', // password123
+    fullName: 'Division IT & Systems Superadmin',
+    role: 'Superadmin',
+    status: 'ACTIVE',
+    email: 'superadmin@deped.gov.ph',
+    schoolStation: 'Division Office - Zamboanga City',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+];
 
-export const DEFAULT_USERS: User[] = [];
+export const DEFAULT_SCHOOLS: School[] = [
+  {
+    id: '123456',
+    name: 'Zamboanga Central School',
+    district: 'Zamboanga Central',
+    division: 'Division of Zamboanga City',
+    region: 'Region IX (Zamboanga Peninsula)',
+    schoolHeadName: 'School Head / Principal IV',
+    schoolHeadPosition: 'Principal IV',
+    address: 'Zamboanga City, Region IX',
+    isPrimary: true,
+  },
+];
 
 export async function addAuditLog(
   actor: string,
@@ -117,24 +148,57 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
     }
   }
 
-  // Clean up any obsolete pre-configured demo accounts from IndexedDB
+  // Seed default authentication users if not already present
+  // Clean up any deprecated preconfigured sample accounts (e.g. ao2_admin, principal)
   try {
-    await db.users.where('username').anyOf(['superadmin', 'ao2_cluster']).delete();
-    await db.users.where('id').anyOf(['superadmin_id', 'aoii_id']).delete();
+    const deprecatedUsernames = ['ao2_admin', 'principal'];
+    const deprecatedIds = ['user_ao2_default', 'user_schoolhead_default'];
+    const usersToClean = await db.users
+      .filter((u) => deprecatedUsernames.includes(u.username) || deprecatedIds.includes(u.id))
+      .toArray();
+    for (const u of usersToClean) {
+      await db.users.delete(u.id);
+    }
   } catch (err) {
-    console.warn('Error purging pre-configured accounts:', err);
+    console.warn('Error purging deprecated preconfigured users:', err);
   }
 
-  // Seed default authentication users only if defined
-  if (DEFAULT_USERS.length > 0) {
+  // Ensure default superadmin exists and is ACTIVE
+  for (const defaultUser of DEFAULT_USERS) {
     try {
-      const userCount = await db.users.count();
-      if (userCount === 0) {
-        await db.users.bulkAdd(DEFAULT_USERS);
+      const existing = await db.users.where('username').equals(defaultUser.username).first();
+      if (!existing) {
+        await db.users.add(defaultUser);
+      } else {
+        // Enforce superadmin ACTIVE status and role
+        if (existing.status !== 'ACTIVE' || !existing.passwordHash || existing.role !== 'Superadmin') {
+          await db.users.put({
+            ...existing,
+            role: 'Superadmin',
+            status: 'ACTIVE',
+            passwordHash: existing.passwordHash || defaultUser.passwordHash,
+          });
+        }
       }
     } catch (err) {
-      console.warn('Error checking/seeding users table:', err);
+      console.warn('Error checking/seeding user table for:', defaultUser.username, err);
     }
+  }
+
+  // Ensure any other existing users have a defined status (default to PENDING if missing)
+  try {
+    const allUsers = await db.users.toArray();
+    for (const user of allUsers) {
+      if (!user.status) {
+        const isSuper = user.username === 'superadmin' || user.role === 'Superadmin';
+        await db.users.put({
+          ...user,
+          status: isSuper ? 'ACTIVE' : 'PENDING',
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Error verifying user account statuses:', err);
   }
 
   return true;

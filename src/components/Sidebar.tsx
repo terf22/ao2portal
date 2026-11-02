@@ -37,6 +37,7 @@ interface SidebarProps {
   personnelCount: number;
   dueNosiCount: number;
   pendingLeavesCount: number;
+  pendingUsersCount?: number;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   isMobileOpen?: boolean;
@@ -50,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   personnelCount,
   dueNosiCount,
   pendingLeavesCount,
+  pendingUsersCount = 0,
   isCollapsed = false,
   onToggleCollapse,
   isMobileOpen = false,
@@ -136,10 +138,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'SUPERADMIN_MONITOR' as ActiveTab,
-      label: 'Session & Audit Trail',
+      label: 'Superadmin & Approvals',
       icon: ShieldAlert,
       allowedRoles: ['Superadmin', 'Admin'],
-      badge: null,
+      badge: pendingUsersCount > 0 ? `${pendingUsersCount} Pending` : null,
+      badgeColor: 'bg-amber-100 text-amber-900 font-bold border border-amber-300 animate-pulse',
     },
   ];
 

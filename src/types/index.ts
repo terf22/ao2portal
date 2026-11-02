@@ -25,17 +25,25 @@ export interface SchoolProfile {
   contactNumber?: string;
 }
 
+export type UserAccountStatus = 'ACTIVE' | 'PENDING' | 'REJECTED' | 'SUSPENDED';
+
 export interface User {
   id: string; // Unique user identifier
   username: string; // Login username or email
   passwordHash?: string; // Hashed password stored client-side
   fullName: string;
   role: UserRole;
+  status: UserAccountStatus;
   email?: string;
   avatarUrl?: string;
   schoolStation?: string;
   isGoogleUser?: boolean;
   createdAt?: string;
+  rejectionReason?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  transferredTo?: string;
+  transferredAt?: string;
 }
 
 export type PersonnelType = 'Teaching' | 'Non-Teaching' | 'JO/COS';
@@ -157,7 +165,8 @@ export type AuditCategory =
   | 'DATABASE_IMPORT'
   | 'CLOUD_SYNC'
   | 'LEAVE_MANAGEMENT'
-  | 'SCHOOL_CONFIG';
+  | 'SCHOOL_CONFIG'
+  | 'USER_MANAGEMENT';
 
 export type AuditSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
 
@@ -188,6 +197,7 @@ export interface UserSession {
   email?: string;
   avatarUrl?: string;
   role: UserRole;
+  status?: UserAccountStatus;
   ipAddress: string;
   schoolLocation: string;
   loginTime: string;

@@ -131,6 +131,27 @@ export async function loginWithCredentials(
     throw new Error('Incorrect password. Please try again.');
   }
 
+  // Status checks: only ACTIVE users may log in
+  const userStatus = user.status || (user.role === 'Superadmin' || user.username === 'superadmin' ? 'ACTIVE' : 'PENDING');
+
+  if (userStatus === 'PENDING') {
+    throw new Error(
+      'Account Pending Approval: Your account registration has been submitted and is awaiting approval by the Division Superadmin. You will be able to log in once your registration is approved.'
+    );
+  }
+
+  if (userStatus === 'SUSPENDED') {
+    throw new Error(
+      'Account Suspended: This account has been suspended by the administrator. Portal access is restricted.'
+    );
+  }
+
+  if (userStatus === 'REJECTED') {
+    throw new Error(
+      `Account Registration Declined: ${user.rejectionReason ? user.rejectionReason : 'Your registration was rejected by the Superadmin. Please contact Division IT or your Cluster AO.'}`
+    );
+  }
+
   const session: UserSession = {
     userId: user.id,
     username: user.username,
@@ -138,6 +159,7 @@ export async function loginWithCredentials(
     email: user.email || (user.username.includes('@') ? user.username : undefined),
     avatarUrl: user.avatarUrl,
     role: user.role || 'AO II',
+    status: userStatus,
     schoolLocation: user.schoolStation || schoolLocationDefault || 'Station Assigned',
     ipAddress: '127.0.0.1',
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0',
@@ -151,8 +173,16 @@ export async function loginWithCredentials(
   return session;
 }
 
+export interface RegistrationOutcome {
+  success: boolean;
+  user: User;
+  isPending: boolean;
+  message: string;
+}
+
 /**
  * Register a new user account in IndexedDB
+ * Newly registered accounts start with status = 'PENDING' awaiting Superadmin approval
  */
 export async function registerNewAccount(details: {
   fullName: string;
@@ -161,7 +191,7 @@ export async function registerNewAccount(details: {
   password: string;
   role: UserRole;
   schoolStation?: string;
-}): Promise<UserSession> {
+}): Promise<RegistrationOutcome> {
   const cleanUsername = details.username.trim().toLowerCase();
   const cleanEmail = details.email?.trim().toLowerCase() || (cleanUsername.includes('@') ? cleanUsername : undefined);
 
@@ -196,6 +226,7 @@ export async function registerNewAccount(details: {
     passwordHash: hashedPassword,
     fullName: details.fullName.trim(),
     role: details.role,
+    status: 'PENDING',
     email: cleanEmail,
     schoolStation: details.schoolStation?.trim() || '',
     isGoogleUser: false,
@@ -204,29 +235,325 @@ export async function registerNewAccount(details: {
 
   await db.users.add(newUser);
 
-  const session: UserSession = {
-    userId: newUser.id,
-    username: newUser.username,
-    fullName: newUser.fullName,
-    email: newUser.email,
-    role: newUser.role,
-    schoolLocation: newUser.schoolStation || 'Station Assigned',
-    ipAddress: '127.0.0.1',
-    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0',
-    loginTime: new Date().toLocaleTimeString('en-PH'),
-    isGoogleLinked: false,
-  };
-
-  saveStoredSession(session);
   await addAuditLog(
     newUser.fullName,
     newUser.role,
     'AUTH',
-    'USER_REGISTERED',
-    `Registered new ${newUser.role} account (${newUser.username})`
+    'USER_REGISTERED_PENDING',
+    `Registered new ${newUser.role} account (${newUser.username}) - Awaiting Superadmin approval`
   );
 
-  return session;
+  return {
+    success: true,
+    user: newUser,
+    isPending: true,
+    message: `Account registered successfully for ${newUser.fullName}! Your account is pending Superadmin approval before you can sign in.`,
+  };
+}
+
+/**
+ * Fetch all registered accounts from IndexedDB
+ */
+export async function getAllRegisteredUsers(): Promise<User[]> {
+  try {
+    return await db.users.toArray();
+  } catch (err) {
+    console.error('Failed to load registered users:', err);
+    return [];
+  }
+}
+
+/**
+ * Approve a pending user account
+ */
+export async function approveUserAccount(
+  userId: string,
+  actor: UserSession | string
+): Promise<User> {
+  const user = await db.users.get(userId);
+  if (!user) throw new Error('User not found.');
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  const updated: User = {
+    ...user,
+    status: 'ACTIVE',
+    rejectionReason: undefined,
+    approvedBy: actorName,
+    approvedAt: new Date().toISOString(),
+  };
+
+  await db.users.put(updated);
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'USER_MANAGEMENT',
+    'USER_APPROVED',
+    `Approved ${user.role} account for ${user.fullName} (${user.username})`,
+    'INFO'
+  );
+
+  return updated;
+}
+
+/**
+ * Reject a pending user account
+ */
+export async function rejectUserAccount(
+  userId: string,
+  reason: string,
+  actor: UserSession | string
+): Promise<User> {
+  const user = await db.users.get(userId);
+  if (!user) throw new Error('User not found.');
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  const updated: User = {
+    ...user,
+    status: 'REJECTED',
+    rejectionReason: reason || 'Registration declined by administrator',
+  };
+
+  await db.users.put(updated);
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'USER_MANAGEMENT',
+    'USER_REJECTED',
+    `Rejected registration for ${user.fullName} (${user.username}). Reason: ${updated.rejectionReason}`,
+    'WARNING'
+  );
+
+  return updated;
+}
+
+/**
+ * Suspend an active user account
+ */
+export async function suspendUserAccount(
+  userId: string,
+  actor: UserSession | string,
+  reason?: string
+): Promise<User> {
+  const user = await db.users.get(userId);
+  if (!user) throw new Error('User not found.');
+  if (user.username === 'superadmin') {
+    throw new Error('The primary superadmin account cannot be suspended.');
+  }
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  const updated: User = {
+    ...user,
+    status: 'SUSPENDED',
+    rejectionReason: reason || 'Account suspended by administrator',
+  };
+
+  await db.users.put(updated);
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'USER_MANAGEMENT',
+    'USER_SUSPENDED',
+    `Suspended account for ${user.fullName} (${user.username})`,
+    'WARNING'
+  );
+
+  return updated;
+}
+
+/**
+ * Reactivate a suspended or rejected user account
+ */
+export async function reactivateUserAccount(
+  userId: string,
+  actor: UserSession | string
+): Promise<User> {
+  const user = await db.users.get(userId);
+  if (!user) throw new Error('User not found.');
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  const updated: User = {
+    ...user,
+    status: 'ACTIVE',
+    rejectionReason: undefined,
+  };
+
+  await db.users.put(updated);
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'USER_MANAGEMENT',
+    'USER_REACTIVATED',
+    `Reactivated account for ${user.fullName} (${user.username})`,
+    'INFO'
+  );
+
+  return updated;
+}
+
+/**
+ * Delete a user account permanently
+ */
+export async function deleteUserAccount(
+  userId: string,
+  actor: UserSession | string
+): Promise<void> {
+  const user = await db.users.get(userId);
+  if (!user) throw new Error('User not found.');
+  if (user.username === 'superadmin') {
+    throw new Error('The primary superadmin account cannot be deleted.');
+  }
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  await db.users.delete(userId);
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'USER_MANAGEMENT',
+    'USER_DELETED',
+    `Permanently deleted user account ${user.fullName} (${user.username})`,
+    'WARNING'
+  );
+}
+
+/**
+ * Modify user role and assigned school station
+ */
+export async function updateUserRoleAndStation(
+  userId: string,
+  newRole: UserRole,
+  newStation: string,
+  actor: UserSession | string
+): Promise<User> {
+  const user = await db.users.get(userId);
+  if (!user) throw new Error('User not found.');
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  const updated: User = {
+    ...user,
+    role: newRole,
+    schoolStation: newStation.trim(),
+  };
+
+  await db.users.put(updated);
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'USER_MANAGEMENT',
+    'USER_ROLE_UPDATED',
+    `Updated ${user.fullName} role to ${newRole} & station to "${newStation}"`,
+    'INFO'
+  );
+
+  return updated;
+}
+
+/**
+ * Transfer personnel records and station assignment from one account to another
+ * (e.g., when an AO or Principal resigns or is reassigned)
+ */
+export async function transferAccountData(
+  params: {
+    sourceUserId: string;
+    targetUserId: string;
+    transferStation: boolean;
+    transferPersonnel: boolean;
+    suspendSourceUser: boolean;
+    remarks?: string;
+  },
+  actor: UserSession | string
+): Promise<{ affectedPersonnel: number; sourceUser: User; targetUser: User }> {
+  const { sourceUserId, targetUserId, transferStation, transferPersonnel, suspendSourceUser, remarks } = params;
+
+  if (sourceUserId === targetUserId) {
+    throw new Error('Source and destination accounts must be different.');
+  }
+
+  const sourceUser = await db.users.get(sourceUserId);
+  const targetUser = await db.users.get(targetUserId);
+
+  if (!sourceUser) throw new Error('Source account not found.');
+  if (!targetUser) throw new Error('Target account not found.');
+
+  const actorName = typeof actor === 'string' ? actor : actor.fullName || actor.username;
+  const actorRole = typeof actor === 'string' ? 'Superadmin' : actor.role;
+
+  let affectedPersonnel = 0;
+
+  // 1. Inherit or reassign school station
+  let updatedTargetUser: User = { ...targetUser };
+  if (transferStation && sourceUser.schoolStation) {
+    updatedTargetUser = {
+      ...updatedTargetUser,
+      schoolStation: sourceUser.schoolStation,
+    };
+    await db.users.put(updatedTargetUser);
+  }
+
+  // 2. Transfer / reassign personnel records
+  if (transferPersonnel && sourceUser.schoolStation) {
+    const sourceStationNorm = sourceUser.schoolStation.trim().toLowerCase();
+    const allPersonnel = await db.personnel.toArray();
+    const matching = allPersonnel.filter(
+      (p) =>
+        (p.schoolStation && p.schoolStation.trim().toLowerCase() === sourceStationNorm) ||
+        (p.schoolId && sourceStationNorm.includes(p.schoolId))
+    );
+
+    // If destination has a distinct school station name, update records to reflect new handover
+    const newStationName = updatedTargetUser.schoolStation || sourceUser.schoolStation;
+    for (const p of matching) {
+      const updatedP = {
+        ...p,
+        schoolStation: newStationName,
+        updatedAt: Date.now(),
+      };
+      await db.personnel.put(updatedP);
+      affectedPersonnel++;
+    }
+  }
+
+  // 3. Optionally suspend source user (resigned/transferred)
+  let updatedSourceUser: User = { ...sourceUser };
+  if (suspendSourceUser && sourceUser.username !== 'superadmin') {
+    updatedSourceUser = {
+      ...updatedSourceUser,
+      status: 'SUSPENDED',
+      transferredTo: targetUser.id,
+      transferredAt: new Date().toISOString(),
+      rejectionReason: `Resigned / Relinquished station. Records transferred to ${targetUser.fullName} (${targetUser.username})`,
+    };
+    await db.users.put(updatedSourceUser);
+  }
+
+  // 4. Log detailed audit trail
+  const details = `Transferred data from ${sourceUser.fullName} (${sourceUser.username}) to ${targetUser.fullName} (${targetUser.username}). Station Handover: ${transferStation ? 'Yes' : 'No'}. Personnel Handed Over: ${affectedPersonnel} records. Source Suspended: ${suspendSourceUser ? 'Yes' : 'No'}. Reason/Remarks: ${remarks || 'Personnel resignation/reassignment'}`;
+
+  await addAuditLog(
+    actorName,
+    actorRole,
+    'DATA_PORTABILITY',
+    'ACCOUNT_DATA_TRANSFER',
+    details,
+    'CRITICAL'
+  );
+
+  return {
+    affectedPersonnel,
+    sourceUser: updatedSourceUser,
+    targetUser: updatedTargetUser,
+  };
 }
 
 /**
@@ -258,6 +585,7 @@ export async function authenticateWithGoogle(
       fullName: googleUser.name,
       email: cleanEmail,
       role: assignedRole,
+      status: assignedRole === 'Superadmin' ? 'ACTIVE' : 'PENDING',
       avatarUrl: googleUser.picture,
       schoolStation: schoolLocation,
       isGoogleUser: true,

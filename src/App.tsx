@@ -104,6 +104,17 @@ export default function App() {
     }
   }, []);
 
+  const [pendingUsersCount, setPendingUsersCount] = useState<number>(0);
+
+  const reloadPendingUsers = useCallback(async () => {
+    try {
+      const pending = await db.users.where('status').equals('PENDING').count();
+      setPendingUsersCount(pending);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Load Database and personnel on first boot
   const reloadRoster = useCallback(async () => {
     try {
@@ -111,6 +122,7 @@ export default function App() {
       const records = await db.personnel.toArray();
       setPersonnelList(records);
       await reloadSchools();
+      await reloadPendingUsers();
 
       // Ensure school profile is reliably recovered from localStorage or IndexedDB
       const persistedProfile = await loadPersistedSchoolProfile();
@@ -131,7 +143,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [reloadSchools]);
+  }, [reloadSchools, reloadPendingUsers]);
 
   useEffect(() => {
     reloadRoster();
@@ -301,6 +313,7 @@ export default function App() {
         personnelCount={personnelList.length}
         dueNosiCount={dueNosiCount}
         pendingLeavesCount={pendingLeavesCount}
+        pendingUsersCount={pendingUsersCount}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
         isMobileOpen={isMobileDrawerOpen}
@@ -424,6 +437,7 @@ export default function App() {
                 allStations={stations}
                 schools={schools}
                 onRefreshSchools={reloadSchools}
+                onRefreshRoster={reloadRoster}
               />
             )}
           </div>
