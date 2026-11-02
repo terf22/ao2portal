@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users,
   Award,
@@ -12,11 +12,22 @@ import {
   ArrowRight,
   AlertCircle,
   CheckCircle2,
+  ShieldAlert,
+  Megaphone,
+  Radio,
+  Bell,
+  Sparkles,
+  Activity,
+  UserCheck,
+  ArrowRightLeft,
+  Info,
+  ExternalLink,
 } from 'lucide-react';
 import { calculateNOSIEligibility } from '../utils/nosiEngine';
 import { formatPHP, getSalary, hasSalaryTrancheData, getLoadedSalaryTranche } from '../data/ssl2026Tranche';
-import { Personnel, SchoolProfile, UserSession } from '../types';
+import { Announcement, AuditLog, Personnel, SchoolProfile, UserSession } from '../types';
 import { ActiveTab } from './Sidebar';
+import { getAnnouncements, getAuditLogs, db } from '../db/dexie';
 
 interface ExecutiveDashboardProps {
   personnelList: Personnel[];
@@ -35,27 +46,36 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
   onOpenSchoolModal,
   onNavigate,
 }) => {
-  // Stats
+  const isSuperadmin = currentUser.role === 'Superadmin';
+
+  // Division-wide Stats
   const totalCount = personnelList.length;
   const teachingCount = personnelList.filter((p) => p.personnelType === 'Teaching').length;
   const nonTeachingCount = personnelList.filter((p) => p.personnelType === 'Non-Teaching').length;
 
+  // Station Stats for non-Superadmin
   const stationPersonnel = personnelList.filter(
     (p) => selectedStation === 'All Stations' || p.schoolStation === selectedStation
   );
 
-  // NOSI Due
-  const nosiEvaluations = personnelList.map((p) => calculateNOSIEligibility(p));
-  const dueNosi = nosiEvaluations.filter((n) => n.isEligibleNow);
-  const upcomingNosi = nosiEvaluations.filter((n) => !n.isEligibleNow && n.daysRemaining <= 180);
+  // NOSI Due (for non-Superadmin)
+  const nosiEvaluations = useMemo(
+    () => personnelList.map((p) => calculateNOSIEligibility(p)),
+    [personnelList]
+  );
+  const dueNosi = useMemo(() => nosiEvaluations.filter((n) => n.isEligibleNow), [nosiEvaluations]);
+  const upcomingNosi = useMemo(
+    () => nosiEvaluations.filter((n) => !n.isEligibleNow && n.daysRemaining <= 180),
+    [nosiEvaluations]
+  );
 
-  // Dynamic DTR Compliance Calculation
+  // DTR Compliance
   const personnelWithDTR = personnelList.filter(
     (p) => p.dtrLogs && Object.keys(p.dtrLogs).length > 0
   ).length;
   const dtrCompliancePct = totalCount > 0 ? Math.round((personnelWithDTR / totalCount) * 100) : 0;
 
-  // Dynamic Pending Leaves Calculation
+  // Pending Leaves
   const pendingLeavesCount = personnelList.reduce((acc, p) => {
     const pending = (p.leaveLedger || []).filter(
       (entry) =>
@@ -65,21 +85,64 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
     return acc + pending;
   }, 0);
 
-  // 2026 SSL Tranche Auto-Detection
+  // Tranche Data & Payroll Calculations
+  const [activeTranche, setActiveTranche] = useState(() => getLoadedSalaryTranche());
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [recentLogs, setRecentLogs] = useState<AuditLog[]>([]);
+  const [userStats, setUserStats] = useState({ total: 0, pending: 0, active: 0 });
+
+  const loadDashboardData = useCallback(async () => {
+    try {
+      const anns = await getAnnouncements(currentUser.role);
+      setAnnouncements(anns);
+      setActiveTranche(getLoadedSalaryTranche());
+
+      if (isSuperadmin) {
+        const logs = await getAuditLogs(8);
+        setRecentLogs(logs);
+
+        const allUsers = await db.users.toArray();
+        const pending = allUsers.filter((u) => u.status === 'PENDING').length;
+        const active = allUsers.filter((u) => u.status === 'ACTIVE').length;
+        setUserStats({ total: allUsers.length, pending, active });
+      }
+    } catch (err) {
+      console.warn('Dashboard data refresh error:', err);
+    }
+  }, [currentUser.role, isSuperadmin]);
+
+  useEffect(() => {
+    loadDashboardData();
+
+    const handleAnnouncements = () => loadDashboardData();
+    const handleTranche = () => {
+      setActiveTranche(getLoadedSalaryTranche());
+      loadDashboardData();
+    };
+
+    window.addEventListener('announcements-updated', handleAnnouncements);
+    window.addEventListener('salary-tranche-updated', handleTranche);
+
+    const interval = setInterval(loadDashboardData, 8000);
+
+    return () => {
+      window.removeEventListener('announcements-updated', handleAnnouncements);
+      window.removeEventListener('salary-tranche-updated', handleTranche);
+      clearInterval(interval);
+    };
+  }, [loadDashboardData]);
+
   const totalMonthlyPayroll = personnelList.reduce((sum, p) => {
     return sum + getSalary(p.salaryGrade, p.stepIncrement);
   }, 0);
 
-  // Annualized Personnel Services (14-Month statutory basis: 12 mos basic + 1 mo Mid-Year + 1 mo Year-End bonus)
   const annualPersonnelServices = totalMonthlyPayroll * 14;
 
-  // Average Salary Grade
   const averageSalaryGrade =
     totalCount > 0
       ? (personnelList.reduce((sum, p) => sum + p.salaryGrade, 0) / totalCount).toFixed(1)
       : '0';
 
-  // Projected increase upon pending NOSI Step execution
   const projectedNosiIncrease = dueNosi.reduce((sum, n) => {
     const currentSal = getSalary(n.personnel.salaryGrade, n.personnel.stepIncrement);
     const nextSal = getSalary(
@@ -89,12 +152,8 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
     return sum + (nextSal - currentSal);
   }, 0);
 
-  // Tranche Grade Distribution
-  const gradeDistribution = React.useMemo(() => {
-    const map = new Map<
-      number,
-      { count: number; monthlyTotal: number; positions: Set<string> }
-    >();
+  const gradeDistribution = useMemo(() => {
+    const map = new Map<number, { count: number; monthlyTotal: number; positions: Set<string> }>();
     personnelList.forEach((p) => {
       const existing = map.get(p.salaryGrade) || {
         count: 0,
@@ -116,14 +175,444 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
       .sort((a, b) => a.grade - b.grade);
   }, [personnelList]);
 
+  // =========================================================================
+  // SUPERADMIN DEDICATED DIVISION OVERSIGHT DASHBOARD
+  // Strictly without School Details, Form 48, NOSI, or Biometrics merge
+  // =========================================================================
+  if (isSuperadmin) {
+    const activeAnnouncements = announcements.filter((a) => a.isActive);
+
+    return (
+      <div className="space-y-6">
+        {/* Top Division Oversight Banner */}
+        <div className="bg-gradient-to-r from-[#1e3a8a] via-blue-900 to-indigo-950 text-white rounded-xl p-6 shadow-sm border border-blue-900/40 relative overflow-hidden">
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-500 text-blue-950 text-[10px] font-black uppercase tracking-wider shadow-xs">
+                Division Superadmin
+              </span>
+              <span className="text-xs text-blue-200">
+                Department of Education &bull; Division of Zamboanga City
+              </span>
+              <span className="text-xs text-emerald-300 font-mono flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Division Master Control Active
+              </span>
+            </div>
+
+            <h1 className="text-xl sm:text-2xl font-bold mt-2 text-white tracking-tight">
+              Division IT &amp; Systems Governance Console
+            </h1>
+            <p className="text-xs text-blue-100/90 mt-1 max-w-3xl leading-relaxed">
+              Division-wide oversight. Manage user account approvals and data transfers, update and deploy the official statutory Salary Tranche (SSL) to all AO II accounts, post broadcast announcements, and monitor real-time audit activity across all stations.
+            </p>
+
+            {/* Quick Actions */}
+            <div className="mt-5 flex flex-wrap gap-2.5">
+              <button
+                onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+                className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-blue-950 rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>
+                  User Approvals &amp; Governance
+                  {userStats.pending > 0 ? ` (${userStats.pending} Pending)` : ''}
+                </span>
+              </button>
+
+              <button
+                onClick={() => onNavigate('SSL2026')}
+                className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Deploy Salary Tranche (SSL)</span>
+              </button>
+
+              <button
+                onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+                className="px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold border border-white/20 transition flex items-center gap-1.5"
+              >
+                <Megaphone className="w-3.5 h-3.5 text-amber-300" />
+                <span>Post Broadcast Announcement</span>
+              </button>
+
+              <button
+                onClick={() => onNavigate('PIMS')}
+                className="px-3.5 py-1.5 bg-white text-[#1e3a8a] hover:bg-slate-100 rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+              >
+                <Users className="w-3.5 h-3.5 text-[#1e3a8a]" />
+                <span>Division Personnel Roster</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Superadmin Division KPI Cards (5-Column) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Total Division Personnel */}
+          <div
+            onClick={() => onNavigate('PIMS')}
+            className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-[#1e3a8a] transition cursor-pointer"
+          >
+            <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+              Division Personnel
+            </p>
+            <div className="flex items-end gap-2">
+              <span className="text-2xl sm:text-3xl font-bold text-[#1e3a8a]">{totalCount}</span>
+              <span className="text-[11px] text-green-600 font-bold mb-1">
+                +{teachingCount} Teaching
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1 truncate">
+              {nonTeachingCount} Non-Teaching personnel
+            </p>
+          </div>
+
+          {/* User Accounts & Approvals */}
+          <div
+            onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+            className={`p-4 rounded-xl border shadow-sm transition cursor-pointer ${
+              userStats.pending > 0
+                ? 'bg-amber-50/70 border-amber-300 hover:border-amber-500'
+                : 'bg-white border-slate-200 hover:border-[#1e3a8a]'
+            }`}
+          >
+            <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+              User Approvals
+            </p>
+            <div className="flex items-end gap-2">
+              <span
+                className={`text-2xl sm:text-3xl font-bold ${
+                  userStats.pending > 0 ? 'text-amber-800' : 'text-slate-800'
+                }`}
+              >
+                {userStats.pending}
+              </span>
+              <span className="text-[11px] text-slate-500 mb-1">
+                Pending / {userStats.total} Users
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1 truncate">
+              {userStats.active} Active accounts in division
+            </p>
+          </div>
+
+          {/* Active Division Salary Tranche */}
+          <div
+            onClick={() => onNavigate('SSL2026')}
+            className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-emerald-600 transition cursor-pointer"
+          >
+            <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+              Salary Tranche
+            </p>
+            <div className="flex items-end gap-1.5">
+              <span className="text-lg sm:text-xl font-bold text-emerald-700 truncate">
+                {activeTranche?.title ? 'Active & Deployed' : 'Not Configured'}
+              </span>
+            </div>
+            <p className="text-[11px] text-emerald-800 mt-1 truncate font-medium">
+              Reflected to all AO II roles only
+            </p>
+          </div>
+
+          {/* Broadcast Announcements */}
+          <div
+            onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+            className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-blue-700 transition cursor-pointer"
+          >
+            <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+              Broadcasts
+            </p>
+            <div className="flex items-end gap-2">
+              <span className="text-2xl sm:text-3xl font-bold text-blue-900">
+                {activeAnnouncements.length}
+              </span>
+              <span className="text-[11px] text-slate-500 mb-1">Active Bulletins</span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1 truncate">Click to post announcement</p>
+          </div>
+
+          {/* System Activity Stream */}
+          <div
+            onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+            className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-indigo-600 transition cursor-pointer"
+          >
+            <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+              Activity Trail
+            </p>
+            <div className="flex items-end gap-2">
+              <span className="text-2xl sm:text-3xl font-bold text-indigo-900">
+                {recentLogs.length}
+              </span>
+              <span className="text-[11px] text-slate-500 mb-1">Recent Events</span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1 truncate">Live cryptographic audit</p>
+          </div>
+        </div>
+
+        {/* Main Superadmin Content: Announcements & Live Activity Feed */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left 2 Cols: Activity Feed & Active Announcements */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Live System Activity Feed */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-indigo-600" />
+                  <h3 className="font-bold text-slate-800 text-sm">
+                    Live System Activity &amp; Audit Feed
+                  </h3>
+                </div>
+                <button
+                  onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+                  className="text-xs font-bold text-[#1e3a8a] hover:underline flex items-center gap-1"
+                >
+                  <span>View All Logs</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                {recentLogs.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 text-xs italic">
+                    No activity logs recorded yet. System events will appear here in real time.
+                  </div>
+                ) : (
+                  recentLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="p-3.5 hover:bg-slate-50 transition text-xs flex items-start justify-between gap-3"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-900">{log.actor}</span>
+                          <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                            {log.role}
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 text-[10px] font-bold font-mono">
+                            {log.category}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                              log.severity === 'CRITICAL'
+                                ? 'bg-rose-100 text-rose-800'
+                                : log.severity === 'WARNING'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {log.severity}
+                          </span>
+                        </div>
+                        <p className="text-slate-600 truncate">{log.details}</p>
+                      </div>
+                      <span className="text-[10px] text-slate-400 whitespace-nowrap font-mono shrink-0">
+                        {new Date(log.timestamp).toLocaleTimeString('en-PH', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Active Announcements Broadcast Widget */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Megaphone className="w-4 h-4 text-amber-600" />
+                  <h3 className="font-bold text-slate-800 text-sm">
+                    Active Broadcast Announcements
+                  </h3>
+                </div>
+                <button
+                  onClick={() => onNavigate('SUPERADMIN_MONITOR')}
+                  className="px-3 py-1 bg-[#1e3a8a] hover:bg-blue-900 text-white text-xs font-bold rounded-lg shadow-sm transition flex items-center gap-1.5"
+                >
+                  <Megaphone className="w-3.5 h-3.5 text-amber-300" />
+                  <span>+ Post Announcement</span>
+                </button>
+              </div>
+
+              <div className="divide-y divide-slate-100">
+                {activeAnnouncements.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 text-xs italic">
+                    No active announcements broadcasted. Click "+ Post Announcement" to publish a bulletin to specific user roles or all accounts.
+                  </div>
+                ) : (
+                  activeAnnouncements.map((ann) => (
+                    <div key={ann.id} className="p-4 hover:bg-slate-50 transition space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              ann.priority === 'CRITICAL'
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : ann.priority === 'URGENT'
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}
+                          >
+                            {ann.priority}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold text-[10px]">
+                            Target: {ann.targetRole === 'ALL' ? 'Broadcast to All' : `${ann.targetRole} Only`}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {new Date(ann.createdAt).toLocaleDateString('en-PH')} &bull; By {ann.author}
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-bold text-slate-900">{ann.title}</h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">{ann.content}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right 1 Col: Superadmin Governance Protocol & Rules */}
+          <div className="space-y-4">
+            <div className="bg-[#1e3a8a] text-white p-5 rounded-xl border border-blue-900 shadow-sm text-xs space-y-3">
+              <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider block">
+                Division Authority &bull; System Governance
+              </span>
+              <h4 className="text-sm font-bold text-white">
+                Superadmin Roles &amp; Operational Responsibilities
+              </h4>
+              <ul className="space-y-2.5 text-[11px] text-blue-100">
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-300 font-bold">&bull;</span>
+                  <span>
+                    <strong>Zero School Assignment:</strong> Superadmin has no single-school station assignment and operates division-wide across all DepEd clusters.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-300 font-bold">&bull;</span>
+                  <span>
+                    <strong>Salary Tranche Governance:</strong> Superadmin is solely responsible for uploading or deploying the statutory Salary Tranche (SSL). It automatically reflects in the account of all <strong>AO II roles only</strong>.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-300 font-bold">&bull;</span>
+                  <span>
+                    <strong>User Approvals &amp; Account Control:</strong> All newly registered accounts (Principals, AO II, Dept Heads) require Superadmin review and approval before gaining system access.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-300 font-bold">&bull;</span>
+                  <span>
+                    <strong>Resignation &amp; Handover Data Transfer:</strong> In case personnel resign or transfer schools, Superadmin can transfer all station roster data to the replacement officer.
+                  </span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-300 font-bold">&bull;</span>
+                  <span>
+                    <strong>Broadcast Announcements:</strong> Push official circulars, memos, and urgent notifications targeted to specific roles or broadcast to all division accounts.
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Quick Link Card to Salary Tranche */}
+            <div
+              onClick={() => onNavigate('SSL2026')}
+              className="bg-white p-4 rounded-xl border border-emerald-200 hover:border-emerald-500 cursor-pointer transition shadow-sm group"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-600" />
+                  <h4 className="text-xs font-bold text-slate-900">
+                    Salary Tranche Deployment Center
+                  </h4>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition" />
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1.5">
+                Current active tranche:{' '}
+                <strong className="text-emerald-800">
+                  {activeTranche?.title || 'None Deployed'}
+                </strong>
+                . Click to upload new DBM schedules or deploy official statutory presets.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // OPERATIONAL ROLES (AO II, Admin, DeptHead, Staff)
+  // Station-based operations: Form 48, NOSI, Biometrics, Leave Ledger
+  // =========================================================================
+  const relevantAnnouncements = announcements.filter(
+    (a) => a.isActive && (a.targetRole === 'ALL' || a.targetRole === currentUser.role)
+  );
+
   return (
     <div className="space-y-6">
+      {/* Official Division Announcements Banner (if active) */}
+      {relevantAnnouncements.length > 0 && (
+        <div className="space-y-3">
+          {relevantAnnouncements.map((ann) => (
+            <div
+              key={ann.id}
+              className={`rounded-xl p-4 shadow-sm border flex items-start gap-3.5 text-xs ${
+                ann.priority === 'CRITICAL'
+                  ? 'bg-rose-50 border-rose-300 text-rose-950'
+                  : ann.priority === 'URGENT'
+                  ? 'bg-amber-50 border-amber-300 text-amber-950'
+                  : 'bg-blue-50 border-blue-200 text-blue-950'
+              }`}
+            >
+              <div
+                className={`p-2 rounded-lg shrink-0 ${
+                  ann.priority === 'CRITICAL'
+                    ? 'bg-rose-500 text-white'
+                    : ann.priority === 'URGENT'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-blue-800 text-white'
+                }`}
+              >
+                <Megaphone className="w-4 h-4" />
+              </div>
+              <div className="space-y-1 min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                      ann.priority === 'CRITICAL'
+                        ? 'bg-rose-200 text-rose-900'
+                        : ann.priority === 'URGENT'
+                        ? 'bg-amber-200 text-amber-900'
+                        : 'bg-blue-200 text-blue-900'
+                    }`}
+                  >
+                    Division Announcement &bull; {ann.priority}
+                  </span>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    Published {new Date(ann.createdAt).toLocaleDateString('en-PH')} by {ann.author}
+                  </span>
+                </div>
+                <h4 className="font-bold text-sm text-slate-900">{ann.title}</h4>
+                <p className="text-slate-700 leading-relaxed">{ann.content}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-[#1e3a8a] via-blue-900 to-indigo-950 text-white rounded-xl p-6 shadow-sm border border-blue-900/40 relative overflow-hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full bg-[#d97706] text-white text-[10px] font-bold uppercase tracking-wider shadow-xs">
-              {schoolProfile?.division ? `${schoolProfile.region ? `${schoolProfile.region} • ` : ''}${schoolProfile.division}` : 'DepEd Station Portal'}
+              {schoolProfile?.division
+                ? `${schoolProfile.region ? `${schoolProfile.region} • ` : ''}${schoolProfile.division}`
+                : 'DepEd Station Portal'}
             </span>
             <span className="text-xs text-blue-200/80">&bull; RA 6758 &amp; CSC Form 48 Standard</span>
           </div>
@@ -136,7 +625,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             <strong className="text-white">
               {selectedStation || schoolProfile?.schoolName || 'Station Not Yet Configured'}
             </strong>
-            . Real-time automatic calculation of station staffing, statutory 2026 SSL salary tranche expenditure, CSC Form 48 DTR automation, and 3-year step increment tracking.
+            . Real-time automatic calculation of station staffing, statutory salary tranche expenditure deployed by Superadmin, CSC Form 48 DTR automation, and 3-year step increment tracking.
           </p>
 
           <div className="mt-5 flex flex-wrap gap-2.5">
@@ -186,7 +675,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                 Fresh Setup: Enter Your School Details &amp; Build Your Roster
               </h3>
               <p className="text-xs text-slate-600 leading-relaxed max-w-3xl">
-                All previous sample data and default configurations have been completely cleared. You can now input your own official DepEd school information, add teachers and staff in PIMS, or upload your biometric logs.
+                Input your official DepEd school information, add teachers and staff in PIMS, or upload your biometric logs.
               </p>
             </div>
           </div>
@@ -198,7 +687,9 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             >
               <div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-900 uppercase tracking-wide">Step 1</span>
+                  <span className="text-xs font-bold text-blue-900 uppercase tracking-wide">
+                    Step 1
+                  </span>
                   <Building2 className="w-4 h-4 text-blue-700" />
                 </div>
                 <h4 className="text-sm font-bold text-slate-900 mt-1">School Station Details</h4>
@@ -219,10 +710,14 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             >
               <div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wide">Step 2</span>
+                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wide">
+                    Step 2
+                  </span>
                   <Users className="w-4 h-4 text-emerald-700" />
                 </div>
-                <h4 className="text-sm font-bold text-slate-900 mt-1">Personnel Information (PIMS)</h4>
+                <h4 className="text-sm font-bold text-slate-900 mt-1">
+                  Personnel Information (PIMS)
+                </h4>
                 <p className="text-[11px] text-slate-600 mt-1">
                   Add your teaching and non-teaching personnel, plantilla item numbers, and salary grades.
                 </p>
@@ -238,12 +733,14 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
             >
               <div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-purple-900 uppercase tracking-wide">Step 3</span>
+                  <span className="text-xs font-bold text-purple-900 uppercase tracking-wide">
+                    Step 3
+                  </span>
                   <UploadCloud className="w-4 h-4 text-purple-700" />
                 </div>
                 <h4 className="text-sm font-bold text-slate-900 mt-1">Biometric Attendance</h4>
                 <p className="text-[11px] text-slate-600 mt-1">
-                  Upload daily time log spreadsheets (Excel/CSV) from your biometrics terminal to auto-generate Form 48 DTRs.
+                  Upload daily time log spreadsheets from your biometrics terminal to auto-generate Form 48 DTRs.
                 </p>
               </div>
               <span className="text-xs font-bold text-purple-700 inline-flex items-center gap-1">
@@ -261,22 +758,28 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           onClick={() => onNavigate('PIMS')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-[#1e3a8a] transition cursor-pointer"
         >
-          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">Total Personnel</p>
+          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+            Station Personnel
+          </p>
           <div className="flex items-end gap-2">
             <span className="text-2xl sm:text-3xl font-bold text-[#1e3a8a]">{totalCount}</span>
-            <span className="text-[11px] text-green-600 font-bold mb-1">+{teachingCount} Teaching</span>
+            <span className="text-[11px] text-green-600 font-bold mb-1">
+              +{teachingCount} Teaching
+            </span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1 truncate">
             {nonTeachingCount} Non-Teaching &bull; {stationPersonnel.length} at station
           </p>
         </div>
 
-        {/* Salary Tranche Payroll (Adaptive to Custom Upload) */}
+        {/* Salary Tranche Payroll */}
         <div
           onClick={() => onNavigate('SSL2026')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-emerald-600 transition cursor-pointer"
         >
-          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">Salary Tranche</p>
+          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+            Salary Tranche
+          </p>
           <div className="flex items-end gap-1.5">
             {hasSalaryTrancheData() ? (
               <span className="text-xl sm:text-2xl font-bold text-emerald-700">
@@ -291,7 +794,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           <p className="text-[11px] text-slate-500 mt-1 truncate">
             {hasSalaryTrancheData()
               ? `Annual: ${formatPHP(annualPersonnelServices)}`
-              : 'Click to upload DBM template'}
+              : 'Governed by Superadmin'}
           </p>
         </div>
 
@@ -300,16 +803,16 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           onClick={() => onNavigate('FORM48')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-[#1e3a8a] transition cursor-pointer"
         >
-          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">DTR Compliance</p>
+          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+            DTR Compliance
+          </p>
           <div className="flex items-end gap-2">
             <span className="text-2xl sm:text-3xl font-bold text-[#1e3a8a]">{dtrCompliancePct}%</span>
             <span className="text-[11px] text-slate-400 mb-1">
               {totalCount > 0 ? `${personnelWithDTR}/${totalCount} logged` : '0/0'}
             </span>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1 truncate">
-            Form 48 records verified
-          </p>
+          <p className="text-[11px] text-slate-500 mt-1 truncate">Form 48 records verified</p>
         </div>
 
         {/* NOSI Due Soon */}
@@ -317,7 +820,9 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           onClick={() => onNavigate('NOSI')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-[#d97706] transition cursor-pointer"
         >
-          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">NOSI Due Soon</p>
+          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+            NOSI Due Soon
+          </p>
           <div className="flex items-end gap-2">
             <span className="text-2xl sm:text-3xl font-bold text-[#d97706]">{dueNosi.length}</span>
             <span className="text-[11px] text-slate-400 mb-1">Eligible Now</span>
@@ -332,9 +837,13 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           onClick={() => onNavigate('LEAVE_LEDGER')}
           className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm hover:border-[#1e3a8a] transition cursor-pointer"
         >
-          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">Pending Leaves</p>
+          <p className="text-[11px] font-bold text-slate-400 uppercase mb-1 tracking-wider">
+            Pending Leaves
+          </p>
           <div className="flex items-end gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-[#1e3a8a]">{pendingLeavesCount}</span>
+            <span className="text-2xl sm:text-3xl font-bold text-[#1e3a8a]">
+              {pendingLeavesCount}
+            </span>
             <span className="text-[11px] text-amber-600 font-bold mb-1">
               {pendingLeavesCount > 0 ? 'Requires Action' : 'All Cleared'}
             </span>
@@ -345,17 +854,22 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
         </div>
       </div>
 
-      {/* Dedicated 2026 Salary Tranche Auto-Detection Banner */}
+      {/* Dedicated Salary Tranche Auto-Detection Banner for AO II */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <TrendingUp className="w-5 h-5 text-emerald-600 shrink-0" />
             <div>
-              <h3 className="text-sm font-bold text-slate-900">
-                2026 Salary Standardization Law (SSL) Tranche Auto-Detection
-              </h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Salary Standardization Law (SSL) Tranche Auto-Detection
+                </h3>
+                <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 text-[10px] font-bold">
+                  Deployed by Superadmin
+                </span>
+              </div>
               <p className="text-xs text-slate-500">
-                Statutory salary matrix and station personnel services budget computed live from active personnel roster.
+                Statutory salary matrix automatically correlated with station personnel staffing and payroll calculations.
               </p>
             </div>
           </div>
@@ -364,7 +878,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
               onClick={() => onNavigate('SSL2026')}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition"
             >
-              <span>Explore Full 2026 SSL Matrix</span>
+              <span>Explore Active Matrix</span>
               <ArrowRight className="w-3.5 h-3.5 text-emerald-700" />
             </button>
           </div>
@@ -372,9 +886,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
 
         {totalCount === 0 ? (
           <div className="py-6 text-center text-slate-400 text-xs italic space-y-2">
-            <p>
-              2026 SSL Tranche Auto-Detector is currently on standby (0 personnel records detected).
-            </p>
+            <p>SSL Tranche Auto-Detector is currently on standby (0 personnel records detected).</p>
             <p className="text-[11px] text-slate-400">
               When personnel are added or imported, their Salary Grade (1–33) and Step (1–8) are automatically correlated with the national salary matrix.
             </p>
@@ -450,7 +962,6 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
 
       {/* Main Content Area: Recent Personnel Activity Table & Institutional Advisory */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Recent Personnel Activity (Matching Professional Polish Table) */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -486,7 +997,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                   {personnelList.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-6 py-8 text-center text-slate-400 italic">
-                        No personnel records found in the database. Use <strong>Import Biometrics</strong> or the <strong>PIMS Manager</strong> to add school staff.
+                        No personnel records found. Use <strong>Import Biometrics</strong> or <strong>PIMS Manager</strong> to add staff.
                       </td>
                     </tr>
                   ) : (
@@ -525,11 +1036,11 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
 
             <div className="p-4 border-t border-slate-100 bg-slate-50 text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
               <span>Showing {Math.min(5, personnelList.length)} of {personnelList.length} personnel records</span>
-              <span>Offline Cache: Active &bull; Local Encryption Active</span>
+              <span>IndexedDB Active &bull; Station Safe Mode</span>
             </div>
           </div>
 
-          {/* Quick Module Navigation Cards */}
+          {/* Quick Module Navigation Cards for AO II */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div
               onClick={() => onNavigate('FORM48')}
@@ -591,13 +1102,13 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
               <li className="flex items-start gap-2">
                 <span className="text-amber-300">&bull;</span>
                 <span>
-                  <strong>Teaching Hours:</strong> Strictly requires 6 hours classroom teaching + 2 hours preparation duties daily.
+                  <strong>Salary Tranche Schedule:</strong> Updates made by the Division Superadmin are automatically applied to your station's personnel calculations.
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-amber-300">&bull;</span>
                 <span>
-                  <strong>Offline Synchronization:</strong> Outbox automatically syncs whenever internet connectivity is detected.
+                  <strong>Teaching Hours:</strong> Strictly requires 6 hours classroom teaching + 2 hours preparation duties daily.
                 </span>
               </li>
             </ul>

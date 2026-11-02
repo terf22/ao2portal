@@ -24,9 +24,24 @@ import {
   FileText,
   UserCheck2,
   Sparkles,
+  Megaphone,
+  Send,
+  ToggleLeft,
+  ToggleRight,
+  TrendingUp,
 } from 'lucide-react';
-import { getAuditLogs, db } from '../db/dexie';
 import {
+  getAuditLogs,
+  getAnnouncements,
+  createAnnouncement,
+  deleteAnnouncement,
+  toggleAnnouncementActive,
+  db,
+} from '../db/dexie';
+import {
+  Announcement,
+  AnnouncementPriority,
+  AnnouncementTargetRole,
   AuditLog,
   AuditSeverity,
   User,
@@ -55,7 +70,12 @@ interface SuperadminSessionMonitorProps {
   onRefreshRoster?: () => Promise<void>;
 }
 
-type SuperadminSubTab = 'APPROVALS_USERS' | 'DATA_TRANSFER' | 'SESSIONS_CLOUD' | 'AUDIT_LOGS';
+type SuperadminSubTab =
+  | 'APPROVALS_USERS'
+  | 'DATA_TRANSFER'
+  | 'ANNOUNCEMENTS'
+  | 'AUDIT_LOGS'
+  | 'SESSIONS_CLOUD';
 
 export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> = ({
   currentUser,
@@ -120,12 +140,91 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
     setAuditLogs(logs);
   }, []);
 
+  // Announcements State & Handlers
+  const [announcementsList, setAnnouncementsList] = useState<Announcement[]>([]);
+  const [annTitle, setAnnTitle] = useState('');
+  const [annContent, setAnnContent] = useState('');
+  const [annTargetRole, setAnnTargetRole] = useState<AnnouncementTargetRole>('ALL');
+  const [annPriority, setAnnPriority] = useState<AnnouncementPriority>('NORMAL');
+  const [isPostingAnn, setIsPostingAnn] = useState(false);
+  const [annFilterRole, setAnnFilterRole] = useState<'ALL' | AnnouncementTargetRole>('ALL');
+
+  const loadAnnouncements = useCallback(async () => {
+    try {
+      const list = await getAnnouncements();
+      setAnnouncementsList(list);
+    } catch (err) {
+      console.warn('Failed to load announcements:', err);
+    }
+  }, []);
+
+  const handlePostAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!annTitle.trim() || !annContent.trim()) return;
+    setIsPostingAnn(true);
+    try {
+      await createAnnouncement({
+        title: annTitle.trim(),
+        content: annContent.trim(),
+        targetRole: annTargetRole,
+        priority: annPriority,
+        author: currentUser.fullName || currentUser.username || 'Division Superadmin',
+        authorRole: 'Superadmin',
+        isActive: true,
+      });
+      setAnnTitle('');
+      setAnnContent('');
+      setActionFeedback({
+        type: 'success',
+        message: `Announcement "${annTitle.trim()}" published successfully to ${
+          annTargetRole === 'ALL' ? 'all division accounts' : `${annTargetRole} roles only`
+        }!`,
+      });
+      await loadAnnouncements();
+      await loadLogs();
+      setTimeout(() => setActionFeedback(null), 4000);
+    } catch (err) {
+      setActionFeedback({
+        type: 'error',
+        message: `Failed to post announcement: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsPostingAnn(false);
+    }
+  };
+
+  const handleToggleAnn = async (id: string, currentActive: boolean) => {
+    await toggleAnnouncementActive(id, !currentActive, currentUser.username);
+    await loadAnnouncements();
+    await loadLogs();
+  };
+
+  const handleDeleteAnn = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this announcement?')) {
+      await deleteAnnouncement(id, currentUser.username);
+      await loadAnnouncements();
+      await loadLogs();
+    }
+  };
+
   useEffect(() => {
     loadUsers();
     loadLogs();
-    const interval = setInterval(loadLogs, 5000);
-    return () => clearInterval(interval);
-  }, [loadUsers, loadLogs]);
+    loadAnnouncements();
+
+    const handleAnnEvent = () => loadAnnouncements();
+    window.addEventListener('announcements-updated', handleAnnEvent);
+
+    const interval = setInterval(() => {
+      loadLogs();
+      loadAnnouncements();
+    }, 5000);
+
+    return () => {
+      window.removeEventListener('announcements-updated', handleAnnEvent);
+      clearInterval(interval);
+    };
+  }, [loadUsers, loadLogs, loadAnnouncements]);
 
   // Telemetry session setup
   useEffect(() => {
@@ -447,7 +546,7 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Republic of the Philippines &bull; Department of Education Division Governance. Superadmin oversees account approvals, suspensions, and personnel data handover.
+              Republic of the Philippines &bull; Department of Education Division Governance. Superadmin has no school assignment, oversees account approvals, manages the statutory salary tranche, broadcasts announcements, and monitors all system activities.
             </p>
           </div>
 
@@ -523,15 +622,20 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
 
           <button
             type="button"
-            onClick={() => setActiveSubTab('SESSIONS_CLOUD')}
+            onClick={() => setActiveSubTab('ANNOUNCEMENTS')}
             className={`pb-3 px-3.5 border-b-2 flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
-              activeSubTab === 'SESSIONS_CLOUD'
+              activeSubTab === 'ANNOUNCEMENTS'
                 ? 'border-[#1e3a8a] text-[#1e3a8a]'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            <Activity className="w-4 h-4 text-emerald-600" />
-            <span>Live Telemetry &amp; Schools Cloud</span>
+            <Megaphone className="w-4 h-4 text-amber-600" />
+            <span>Broadcast Announcements</span>
+            {announcementsList.filter((a) => a.isActive).length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-[#1e3a8a] text-[10px] font-bold">
+                {announcementsList.filter((a) => a.isActive).length}
+              </span>
+            )}
           </button>
 
           <button
@@ -544,7 +648,20 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
             }`}
           >
             <FileText className="w-4 h-4 text-indigo-600" />
-            <span>Cryptographic Audit Trail</span>
+            <span>System Activity Monitor &amp; Audit Trail</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('SESSIONS_CLOUD')}
+            className={`pb-3 px-3.5 border-b-2 flex items-center gap-2 transition whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'SESSIONS_CLOUD'
+                ? 'border-[#1e3a8a] text-[#1e3a8a]'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Activity className="w-4 h-4 text-emerald-600" />
+            <span>Live Telemetry &amp; Schools Cloud</span>
           </button>
         </div>
       </div>
@@ -1083,7 +1200,255 @@ export const SuperadminSessionMonitor: React.FC<SuperadminSessionMonitorProps> =
       )}
 
       {/* ========================================================================= */}
-      {/* SUBTAB 3: LIVE TELEMETRY & SCHOOLS CLOUD REGISTRY */}
+      {/* SUBTAB 3: DIVISION BROADCAST ANNOUNCEMENTS HUB */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'ANNOUNCEMENTS' && (
+        <div className="space-y-6">
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <Megaphone className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Division Announcement &amp; Broadcast Dispatcher
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Superadmin role: Post official notices, circulars, and updates. Targeted announcements are pushed directly to respective account roles or broadcast to the entire division.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-lg bg-blue-50 text-[#1e3a8a] text-xs font-bold border border-blue-200 flex items-center gap-1.5">
+                <Megaphone className="w-3.5 h-3.5 text-amber-500" />
+                <span>{announcementsList.filter((a) => a.isActive).length} Active Bulletins</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 1 Col: Compose Announcement Form */}
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+              <div className="border-b border-slate-100 pb-3">
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Send className="w-4 h-4 text-[#1e3a8a]" />
+                  <span>Compose New Announcement</span>
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Choose your target audience role and priority level.
+                </p>
+              </div>
+
+              <form onSubmit={handlePostAnnouncement} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Announcement Headline / Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={annTitle}
+                    onChange={(e) => setAnnTitle(e.target.value)}
+                    placeholder="e.g. 2026 SSL Salary Tranche Implementation Guidelines"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-900 font-semibold"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Target Audience *
+                    </label>
+                    <select
+                      value={annTargetRole}
+                      onChange={(e) => setAnnTargetRole(e.target.value as AnnouncementTargetRole)}
+                      className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-900 font-semibold cursor-pointer"
+                    >
+                      <option value="ALL">Broadcast to ALL Roles</option>
+                      <option value="AO II">AO II (Admins Only)</option>
+                      <option value="Admin">School Principals Only</option>
+                      <option value="DeptHead">Department Heads</option>
+                      <option value="Staff">Staff &amp; Teachers Only</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Priority Level *
+                    </label>
+                    <select
+                      value={annPriority}
+                      onChange={(e) => setAnnPriority(e.target.value as AnnouncementPriority)}
+                      className="w-full px-2.5 py-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-900 font-semibold cursor-pointer"
+                    >
+                      <option value="NORMAL">Normal (Bulletin)</option>
+                      <option value="URGENT">Urgent (Action Req.)</option>
+                      <option value="CRITICAL">Critical (Mandatory)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Announcement Body / Message *
+                  </label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={annContent}
+                    onChange={(e) => setAnnContent(e.target.value)}
+                    placeholder="Provide the detailed notification text, reference circular number, deadline, or instruction..."
+                    className="w-full p-2.5 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-900 leading-relaxed"
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isPostingAnn || !annTitle.trim() || !annContent.trim()}
+                    className="w-full py-2.5 bg-[#1e3a8a] hover:bg-blue-900 text-white rounded-lg text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isPostingAnn ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Broadcasting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Megaphone className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Publish &amp; Broadcast Announcement</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Right 2 Cols: Published Bulletins Management */}
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">
+                    Published Division Bulletins ({announcementsList.length})
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Manage active broadcasts or deactivate retired circulars.
+                  </p>
+                </div>
+
+                {/* Filter by target role */}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-500 font-semibold">Filter:</span>
+                  <select
+                    value={annFilterRole}
+                    onChange={(e) => setAnnFilterRole(e.target.value as 'ALL' | AnnouncementTargetRole)}
+                    className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold cursor-pointer"
+                  >
+                    <option value="ALL">All Audiences</option>
+                    <option value="AO II">AO II Only</option>
+                    <option value="Admin">Principals Only</option>
+                    <option value="DeptHead">Dept Heads</option>
+                    <option value="Staff">Staff</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="divide-y divide-slate-100 overflow-y-auto max-h-[500px]">
+                {announcementsList.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 text-xs italic">
+                    No announcements published yet. Use the form on the left to broadcast an announcement.
+                  </div>
+                ) : (
+                  announcementsList
+                    .filter((a) => annFilterRole === 'ALL' || a.targetRole === annFilterRole || a.targetRole === 'ALL')
+                    .map((ann) => (
+                      <div
+                        key={ann.id}
+                        className={`p-4 transition ${ann.isActive ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/60 opacity-60'}`}
+                      >
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="space-y-1.5 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                  ann.priority === 'CRITICAL'
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                    : ann.priority === 'URGENT'
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}
+                              >
+                                {ann.priority}
+                              </span>
+
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-bold text-[10px]">
+                                Target: {ann.targetRole === 'ALL' ? 'Broadcast to ALL' : `${ann.targetRole} Only`}
+                              </span>
+
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  ann.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                                }`}
+                              >
+                                {ann.isActive ? 'ACTIVE IN PORTALS' : 'INACTIVE'}
+                              </span>
+                            </div>
+
+                            <h4 className="text-sm font-bold text-slate-900">{ann.title}</h4>
+                            <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">
+                              {ann.content}
+                            </p>
+
+                            <div className="pt-1 text-[10px] text-slate-400 font-mono">
+                              By {ann.author} &bull; Posted {new Date(ann.createdAt).toLocaleString('en-PH')}
+                            </div>
+                          </div>
+
+                          {/* Quick Actions: Toggle & Delete */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => handleToggleAnn(ann.id, ann.isActive)}
+                              title={ann.isActive ? 'Deactivate announcement' : 'Activate announcement'}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
+                                ann.isActive
+                                  ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-300'
+                              }`}
+                            >
+                              {ann.isActive ? (
+                                <>
+                                  <ToggleRight className="w-4 h-4 text-emerald-600" />
+                                  <span>Active</span>
+                                </>
+                              ) : (
+                                <>
+                                  <ToggleLeft className="w-4 h-4 text-slate-400" />
+                                  <span>Inactive</span>
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteAnn(ann.id)}
+                              title="Delete announcement permanently"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUBTAB 4: LIVE TELEMETRY & SCHOOLS CLOUD REGISTRY */}
       {/* ========================================================================= */}
       {activeSubTab === 'SESSIONS_CLOUD' && (
         <div className="space-y-6">

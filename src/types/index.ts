@@ -166,9 +166,26 @@ export type AuditCategory =
   | 'CLOUD_SYNC'
   | 'LEAVE_MANAGEMENT'
   | 'SCHOOL_CONFIG'
-  | 'USER_MANAGEMENT';
+  | 'USER_MANAGEMENT'
+  | 'ANNOUNCEMENT'
+  | 'SALARY_TRANCHE';
 
 export type AuditSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
+
+export type AnnouncementPriority = 'NORMAL' | 'URGENT' | 'CRITICAL';
+export type AnnouncementTargetRole = 'ALL' | 'AO II' | 'Admin' | 'DeptHead' | 'Staff';
+
+export interface Announcement {
+  id: string;
+  title: string;
+  content: string;
+  targetRole: AnnouncementTargetRole;
+  priority: AnnouncementPriority;
+  author: string;
+  authorRole?: string;
+  createdAt: string;
+  isActive: boolean;
+}
 
 export interface AuditLog {
   id: string;

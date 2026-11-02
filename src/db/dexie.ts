@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import {
+  Announcement,
   AuditCategory,
   AuditLog,
   AuditSeverity,
@@ -7,6 +8,7 @@ import {
   School,
   SyncQueueItem,
   User,
+  UserRole,
 } from '../types';
 
 export class AOIIDatabase extends Dexie {
@@ -15,6 +17,7 @@ export class AOIIDatabase extends Dexie {
   personnel!: Table<Personnel>;
   auditLogs!: Table<AuditLog>;
   syncQueue!: Table<SyncQueueItem>;
+  announcements!: Table<Announcement>;
 
   constructor() {
     super('AOIIDatabase');
@@ -36,6 +39,14 @@ export class AOIIDatabase extends Dexie {
       personnel: 'id, lastName, positionTitle, schoolId, schoolStation, updatedAt',
       auditLogs: 'id, timestamp, category, severity',
       syncQueue: '++id, table, action, timestamp',
+    });
+    this.version(4).stores({
+      users: 'id, username, role, status',
+      schools: 'id, name, district',
+      personnel: 'id, lastName, positionTitle, schoolId, schoolStation, updatedAt',
+      auditLogs: 'id, timestamp, category, severity',
+      syncQueue: '++id, table, action, timestamp',
+      announcements: 'id, targetRole, priority, createdAt, isActive',
     });
   }
 }
@@ -201,7 +212,107 @@ export async function seedDatabaseIfEmpty(): Promise<boolean> {
     console.warn('Error verifying user account statuses:', err);
   }
 
+  // Seed default announcements if table is empty
+  try {
+    const annCount = await db.announcements.count();
+    if (annCount === 0) {
+      await db.announcements.bulkAdd(DEFAULT_ANNOUNCEMENTS);
+    }
+  } catch (err) {
+    console.warn('Error checking/seeding announcements table:', err);
+  }
+
   return true;
+}
+
+export const DEFAULT_ANNOUNCEMENTS: Announcement[] = [
+  {
+    id: 'ANN-WELCOME-2026',
+    title: 'Division Notice: Official Salary Standardization Law (SSL) Central Governance',
+    content:
+      'All Administrative Officers II (AO II) are notified that the active Division Salary Tranche matrix is centrally updated and deployed by the Division Superadmin. Any tranche updates will automatically propagate to all AO II accounts.',
+    targetRole: 'ALL',
+    priority: 'NORMAL',
+    author: 'Division IT & Systems Superadmin',
+    authorRole: 'Superadmin',
+    createdAt: '2026-01-01T08:00:00.000Z',
+    isActive: true,
+  },
+];
+
+export async function getAnnouncements(role?: UserRole): Promise<Announcement[]> {
+  try {
+    const all = await db.announcements.toArray();
+    if (!role || role === 'Superadmin') {
+      return all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    return all
+      .filter((a) => a.isActive && (a.targetRole === 'ALL' || a.targetRole === role))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    console.error('Failed to get announcements:', err);
+    return [];
+  }
+}
+
+export async function createAnnouncement(
+  data: Omit<Announcement, 'id' | 'createdAt'>
+): Promise<Announcement> {
+  const newAnn: Announcement = {
+    ...data,
+    id: `ANN-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    createdAt: new Date().toISOString(),
+  };
+  await db.announcements.add(newAnn);
+  await addAuditLog(
+    newAnn.author,
+    newAnn.authorRole || 'Superadmin',
+    'ANNOUNCEMENT',
+    'POST_ANNOUNCEMENT',
+    `Published announcement: "${newAnn.title}" targeted to ${newAnn.targetRole} (${newAnn.priority})`,
+    newAnn.priority === 'CRITICAL' ? 'WARNING' : 'INFO'
+  );
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('announcements-updated'));
+  }
+  return newAnn;
+}
+
+export async function deleteAnnouncement(id: string, actor: string = 'Superadmin'): Promise<void> {
+  const existing = await db.announcements.get(id);
+  await db.announcements.delete(id);
+  if (existing) {
+    await addAuditLog(
+      actor,
+      'Superadmin',
+      'ANNOUNCEMENT',
+      'DELETE_ANNOUNCEMENT',
+      `Deleted announcement "${existing.title}"`,
+      'INFO'
+    );
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('announcements-updated'));
+  }
+}
+
+export async function toggleAnnouncementActive(
+  id: string,
+  isActive: boolean,
+  actor: string = 'Superadmin'
+): Promise<void> {
+  await db.announcements.update(id, { isActive });
+  await addAuditLog(
+    actor,
+    'Superadmin',
+    'ANNOUNCEMENT',
+    'TOGGLE_ANNOUNCEMENT',
+    `Set announcement status to ${isActive ? 'ACTIVE' : 'INACTIVE'} (ID: ${id})`,
+    'INFO'
+  );
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('announcements-updated'));
+  }
 }
 
 export async function resetDatabaseWithSampleData(): Promise<void> {

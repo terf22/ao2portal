@@ -195,6 +195,23 @@ export default function App() {
     };
   }, [currentUser?.role, reloadRoster]);
 
+  // Strict Superadmin Access Rules: No school assignment, No Form 48, NOSI, or Biometrics merge
+  useEffect(() => {
+    if (currentUser?.role === 'Superadmin') {
+      setIsSchoolModalOpen(false);
+      const forbiddenForSuperadmin: ActiveTab[] = [
+        'FORM48',
+        'NOSI',
+        'BIOMETRIC_UPLOAD',
+        'SCHOOL_CLUSTER',
+        'LEAVE_LEDGER',
+      ];
+      if (forbiddenForSuperadmin.includes(activeTab)) {
+        setActiveTab('DASHBOARD');
+      }
+    }
+  }, [currentUser?.role, activeTab]);
+
   // Role Switcher Handler
   const handleRoleChange = (newRole: UserRole) => {
     setCurrentUser((prev) => (prev ? {

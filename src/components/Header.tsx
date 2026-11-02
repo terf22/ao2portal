@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Building2,
@@ -15,10 +15,14 @@ import {
   Menu,
   FolderSync,
   LogOut,
+  Megaphone,
+  Bell,
+  X,
 } from 'lucide-react';
 import { useOnlineSync } from '../hooks/useOnlineSync';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import { PrintPaperSize, SchoolProfile, UserRole, UserSession } from '../types';
+import { Announcement, PrintPaperSize, SchoolProfile, UserRole, UserSession } from '../types';
+import { getAnnouncements } from '../db/dexie';
 
 interface HeaderProps {
   currentUser: UserSession;
@@ -52,6 +56,23 @@ export const Header: React.FC<HeaderProps> = ({
   const [profileFullName, setProfileFullName] = useState(currentUser.fullName || '');
   const [profileEmail, setProfileEmail] = useState(currentUser.email || '');
   const [profileSavedMsg, setProfileSavedMsg] = useState<string | null>(null);
+
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [showAnnouncementsModal, setShowAnnouncementsModal] = useState(false);
+
+  useEffect(() => {
+    const fetchAnnouncements = async () => {
+      try {
+        const anns = await getAnnouncements(currentUser.role);
+        setAnnouncements(anns.filter((a) => a.isActive));
+      } catch {
+        // ignore
+      }
+    };
+    fetchAnnouncements();
+    window.addEventListener('announcements-updated', fetchAnnouncements);
+    return () => window.removeEventListener('announcements-updated', fetchAnnouncements);
+  }, [currentUser.role]);
 
   const handleOpenProfileModal = () => {
     setProfileFullName(currentUser.fullName || '');
@@ -87,6 +108,8 @@ export const Header: React.FC<HeaderProps> = ({
     }, 1200);
   };
 
+  const isSuperadmin = currentUser.role === 'Superadmin';
+
   return (
     <header className="sticky top-0 z-30 bg-white text-slate-800 border-b border-slate-200 shadow-sm no-print">
       <div className="w-full px-3 sm:px-6 lg:px-8">
@@ -102,83 +125,116 @@ export const Header: React.FC<HeaderProps> = ({
                 <Menu className="w-5 h-5 text-[#1e3a8a]" />
               </button>
             )}
-            <div className="min-w-0">
-              <h2 className="text-sm sm:text-base lg:text-lg font-bold text-slate-900 leading-tight truncate">
-                {schoolProfile.schoolName || 'School Station Not Configured'}
-              </h2>
-              <p className="text-[11px] sm:text-xs text-slate-500 truncate max-w-[200px] sm:max-w-xs md:max-w-md">
-                {schoolProfile.schoolId ? (
-                  <>
-                    School ID: <span className="font-mono font-bold text-blue-900">{schoolProfile.schoolId}</span>
-                    {schoolProfile.district ? ` • ${schoolProfile.district}` : ''}
-                    {schoolProfile.division ? ` • ${schoolProfile.division}` : ''}
-                  </>
-                ) : (
-                  <span
-                    onClick={onOpenSchoolModal}
-                    className="text-amber-700 font-semibold cursor-pointer hover:underline inline-flex items-center gap-1"
-                  >
-                    ⚠️ Click to setup school details
+            {isSuperadmin ? (
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-[#1e3a8a] text-white text-[10px] font-bold uppercase tracking-wider">
+                    Superadmin
                   </span>
-                )}
-              </p>
-            </div>
+                  <span className="text-xs text-slate-500 hidden sm:inline">&bull; Division Office Authority</span>
+                </div>
+                <h2 className="text-sm sm:text-base lg:text-lg font-bold text-slate-900 leading-tight truncate">
+                  DepEd Division of Zamboanga City
+                </h2>
+                <p className="text-[11px] sm:text-xs text-slate-500 truncate">
+                  Division Systems &bull; Central SSL Tranche &bull; Account Approvals &amp; Handover
+                </p>
+              </div>
+            ) : (
+              <div className="min-w-0">
+                <h2 className="text-sm sm:text-base lg:text-lg font-bold text-slate-900 leading-tight truncate">
+                  {schoolProfile.schoolName || 'School Station Not Configured'}
+                </h2>
+                <p className="text-[11px] sm:text-xs text-slate-500 truncate max-w-[200px] sm:max-w-xs md:max-w-md">
+                  {schoolProfile.schoolId ? (
+                    <>
+                      School ID: <span className="font-mono font-bold text-blue-900">{schoolProfile.schoolId}</span>
+                      {schoolProfile.district ? ` • ${schoolProfile.district}` : ''}
+                      {schoolProfile.division ? ` • ${schoolProfile.division}` : ''}
+                    </>
+                  ) : (
+                    <span
+                      onClick={onOpenSchoolModal}
+                      className="text-amber-700 font-semibold cursor-pointer hover:underline inline-flex items-center gap-1"
+                    >
+                      ⚠️ Click to setup school details
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Controls & Quick Switchers */}
           <div className="flex items-center gap-2 sm:gap-4">
-            {/* User's School Station Details Button */}
+            {/* Division Announcements Bell */}
             <button
-              onClick={onOpenSchoolModal}
-              className={`flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border transition cursor-pointer group ${
-                !schoolProfile.schoolName
-                  ? 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100 shadow-xs'
-                  : 'bg-slate-50 hover:bg-blue-50/80 border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-950'
-              }`}
-              title="Click to input or modify your School Details (School Name, ID, Principal, Division)"
+              onClick={() => setShowAnnouncementsModal(true)}
+              title="View Division Announcements"
+              className="relative p-2 text-slate-600 hover:text-[#1e3a8a] hover:bg-slate-100 rounded-lg transition"
             >
-              <Building2
-                className={`w-4 h-4 shrink-0 ${
-                  !schoolProfile.schoolName ? 'text-amber-600 animate-pulse' : 'text-amber-600 group-hover:text-blue-700'
-                }`}
-              />
-              <div className="text-left hidden md:block">
-                <span className="font-bold block text-xs truncate max-w-[170px] lg:max-w-[220px]">
-                  {schoolProfile.schoolName || 'Setup School Details'}
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                  {schoolProfile.schoolId ? (
-                    <>
-                      <span>ID: {schoolProfile.schoolId}</span>
-                      <span>&bull;</span>
-                      <span className="text-blue-700 font-semibold underline">Edit</span>
-                    </>
-                  ) : (
-                    <span className="text-amber-700 font-bold underline">Input Now</span>
-                  )}
-                </span>
-              </div>
-              <div className="md:hidden font-bold text-xs">
-                {schoolProfile.schoolName ? 'School Details' : 'Setup School'}
-              </div>
+              <Megaphone className="w-4 h-4" />
+              {announcements.length > 0 && (
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white animate-pulse" />
+              )}
             </button>
 
-            {/* Paper Size Picker */}
-            <div className="hidden sm:flex items-center gap-1 text-xs bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700">
-              <FileText className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-slate-500 font-medium">Sheet:</span>
-              <select
-                aria-label="Print Paper Size"
-                value={paperSize}
-                onChange={(e) => onPaperSizeChange(e.target.value as PrintPaperSize)}
-                className="bg-transparent text-[#1e3a8a] font-bold text-xs border-none focus:ring-0 cursor-pointer"
+            {/* School Station Details Button (Hidden for Superadmin) */}
+            {!isSuperadmin && (
+              <button
+                onClick={onOpenSchoolModal}
+                className={`flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border transition cursor-pointer group ${
+                  !schoolProfile.schoolName
+                    ? 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100 shadow-xs'
+                    : 'bg-slate-50 hover:bg-blue-50/80 border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-950'
+                }`}
+                title="Click to input or modify your School Details (School Name, ID, Principal, Division)"
               >
-                <option value="Cardstock_3.5x8.5">Form 48 Card (3.5×8.5")</option>
-                <option value="Letter">Letter (8.5×11")</option>
-                <option value="A4">A4 (210×297mm)</option>
-                <option value="Legal">Legal/Folio (8.5×13")</option>
-              </select>
-            </div>
+                <Building2
+                  className={`w-4 h-4 shrink-0 ${
+                    !schoolProfile.schoolName ? 'text-amber-600 animate-pulse' : 'text-amber-600 group-hover:text-blue-700'
+                  }`}
+                />
+                <div className="text-left hidden md:block">
+                  <span className="font-bold block text-xs truncate max-w-[170px] lg:max-w-[220px]">
+                    {schoolProfile.schoolName || 'Setup School Details'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                    {schoolProfile.schoolId ? (
+                      <>
+                        <span>ID: {schoolProfile.schoolId}</span>
+                        <span>&bull;</span>
+                        <span className="text-blue-700 font-semibold underline">Edit</span>
+                      </>
+                    ) : (
+                      <span className="text-amber-700 font-bold underline">Input Now</span>
+                    )}
+                  </span>
+                </div>
+                <div className="md:hidden font-bold text-xs">
+                  {schoolProfile.schoolName ? 'School Details' : 'Setup School'}
+                </div>
+              </button>
+            )}
+
+            {/* Paper Size Picker (Hidden for Superadmin) */}
+            {!isSuperadmin && (
+              <div className="hidden sm:flex items-center gap-1 text-xs bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-700">
+                <FileText className="w-3.5 h-3.5 text-slate-400" />
+                <span className="text-slate-500 font-medium">Sheet:</span>
+                <select
+                  aria-label="Print Paper Size"
+                  value={paperSize}
+                  onChange={(e) => onPaperSizeChange(e.target.value as PrintPaperSize)}
+                  className="bg-transparent text-[#1e3a8a] font-bold text-xs border-none focus:ring-0 cursor-pointer"
+                >
+                  <option value="Cardstock_3.5x8.5">Form 48 Card (3.5×8.5")</option>
+                  <option value="Letter">Letter (8.5×11")</option>
+                  <option value="A4">A4 (210×297mm)</option>
+                  <option value="Legal">Legal/Folio (8.5×13")</option>
+                </select>
+              </div>
+            )}
 
             {/* Cloud Sync Status Component */}
             <div className="flex items-center">
@@ -527,6 +583,81 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Announcements Drawer / Modal */}
+      {showAnnouncementsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
+            <div className="p-4 bg-[#1e3a8a] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Megaphone className="w-5 h-5 text-amber-300" />
+                <div>
+                  <h3 className="font-bold text-sm">Division Broadcast Bulletins</h3>
+                  <p className="text-[10px] text-blue-200">Official Notices &amp; Administrative Circulars</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAnnouncementsModal(false)}
+                className="text-blue-200 hover:text-white p-1 rounded-lg hover:bg-white/10 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-3 flex-1">
+              {announcements.length === 0 ? (
+                <div className="text-center py-10 space-y-2">
+                  <Megaphone className="w-8 h-8 text-slate-300 mx-auto" />
+                  <p className="text-xs text-slate-500 font-medium">
+                    No active division announcements for your role at this time.
+                  </p>
+                </div>
+              ) : (
+                announcements.map((ann) => (
+                  <div
+                    key={ann.id}
+                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-white transition space-y-1.5 text-xs"
+                  >
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                            ann.priority === 'CRITICAL'
+                              ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                              : ann.priority === 'URGENT'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}
+                        >
+                          {ann.priority}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold text-[10px]">
+                          {ann.targetRole === 'ALL' ? 'All Roles' : `${ann.targetRole} Only`}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {new Date(ann.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <h4 className="font-bold text-slate-900">{ann.title}</h4>
+                    <p className="text-slate-600 leading-relaxed">{ann.content}</p>
+                    <div className="pt-1 text-[10px] text-slate-400">
+                      Author: <span className="font-semibold text-slate-600">{ann.author}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                onClick={() => setShowAnnouncementsModal(false)}
+                className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-slate-200 hover:bg-slate-300 text-slate-700 transition"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

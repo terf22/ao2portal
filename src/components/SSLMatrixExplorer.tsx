@@ -15,6 +15,9 @@ import {
   RefreshCw,
   FileText,
   FileCheck2,
+  ShieldAlert,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
 import {
   getLoadedSalaryTranche,
@@ -28,6 +31,7 @@ import {
   parseSalaryTrancheFile,
   saveSalaryTranche,
   clearSalaryTranche,
+  deployOfficialSalaryTranche,
   SalaryTrancheConfig,
 } from '../data/ssl2026Tranche';
 import { addAuditLog } from '../db/dexie';
@@ -42,6 +46,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
   personnelList = [],
   currentUser,
 }) => {
+  const isSuperadmin = currentUser?.role === 'Superadmin';
   // Tranche state & reactive listener
   const [activeTranche, setActiveTranche] = useState<SalaryTrancheConfig | null>(() =>
     getLoadedSalaryTranche()
@@ -150,8 +155,13 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
         return;
       }
 
-      saveSalaryTranche(parseResult.config);
-      setActiveTranche(parseResult.config);
+      const configWithAuthor: SalaryTrancheConfig = {
+        ...parseResult.config,
+        updatedBy: currentUser?.fullName || currentUser?.username || 'Division Superadmin',
+      };
+
+      saveSalaryTranche(configWithAuthor);
+      setActiveTranche(configWithAuthor);
       setIsTrancheActive(true);
       setRefreshTrigger((prev) => prev + 1);
 
@@ -160,15 +170,15 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
         await addAuditLog(
           currentUser.username,
           currentUser.role,
-          'SCHOOL_CONFIG',
+          'SALARY_TRANCHE',
           'TRANCHE_UPLOAD',
-          `Uploaded custom salary tranche "${parseResult.config.title}" with ${parseResult.validGradesCount} configured grades.`
+          `Uploaded and deployed salary tranche "${configWithAuthor.title}" with ${parseResult.validGradesCount} configured grades to all AO II roles.`
         );
       }
 
       setUploadMessage({
         type: 'success',
-        text: `Successfully uploaded and activated "${parseResult.config.title}" (${parseResult.validGradesCount} Salary Grades configured).`,
+        text: `Successfully uploaded and deployed "${configWithAuthor.title}" (${parseResult.validGradesCount} Salary Grades). Automatically reflected in all AO II accounts.`,
       });
     } catch (err) {
       setUploadMessage({
@@ -180,6 +190,39 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+    }
+  };
+
+  const handleDeployPreset = async (preset: 'SSL_2026' | 'SSL_2025') => {
+    try {
+      const deployed = deployOfficialSalaryTranche(
+        preset,
+        currentUser?.fullName || currentUser?.username || 'Division Superadmin'
+      );
+      setActiveTranche(deployed);
+      setIsTrancheActive(true);
+      setRefreshTrigger((prev) => prev + 1);
+
+      if (currentUser) {
+        await addAuditLog(
+          currentUser.username,
+          currentUser.role,
+          'SALARY_TRANCHE',
+          'DEPLOY_TRANCHE_PRESET',
+          `Deployed "${deployed.title}" division-wide. Automatically reflected in all AO II accounts.`,
+          'INFO'
+        );
+      }
+
+      setUploadMessage({
+        type: 'success',
+        text: `Successfully deployed "${deployed.title}"! Automatically reflected in the accounts of all AO II roles.`,
+      });
+    } catch (err) {
+      setUploadMessage({
+        type: 'error',
+        text: `Failed to deploy preset: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   };
 
@@ -198,7 +241,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
         await addAuditLog(
           currentUser.username,
           currentUser.role,
-          'SCHOOL_CONFIG',
+          'SALARY_TRANCHE',
           'TRANCHE_CLEAR',
           'Removed active salary tranche data; reverted to blank baseline.'
         );
@@ -232,6 +275,67 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
         }}
       />
 
+      {/* Superadmin vs AO II Authority Notice Banner */}
+      {isSuperadmin ? (
+        <div className="bg-gradient-to-r from-blue-900 to-indigo-950 text-white p-5 rounded-xl border border-blue-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded bg-amber-500 text-blue-950 text-[10px] font-bold uppercase tracking-wider">
+                Superadmin Authority
+              </span>
+              <span className="text-xs text-blue-200">Central Tranche Governance</span>
+            </div>
+            <h3 className="text-base font-bold text-white">
+              Official Salary Standardization Law (SSL) Tranche Deployment
+            </h3>
+            <p className="text-xs text-blue-100 max-w-2xl leading-relaxed">
+              As Superadmin, you are responsible for updating the latest statutory Salary Tranche. Any updates deployed here automatically propagate in real-time to the accounts of all <strong className="text-amber-300">AO II roles only</strong> across all division stations.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              onClick={() => handleDeployPreset('SSL_2026')}
+              className="px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-xs shadow-sm transition flex items-center gap-1.5"
+              title="Deploy official statutory 2026 SSL VI Tranche (EO 64) to all AO II accounts"
+            >
+              <Sparkles className="w-4 h-4 text-slate-950" />
+              <span>Deploy 2026 SSL Tranche</span>
+            </button>
+            <button
+              onClick={() => handleDeployPreset('SSL_2025')}
+              className="px-3 py-2 bg-blue-800 hover:bg-blue-700 text-white font-semibold rounded-lg text-xs border border-blue-600 transition flex items-center gap-1.5"
+              title="Deploy 2025 SSL V Tranche schedule"
+            >
+              <span>Deploy 2025 Tranche</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-gradient-to-r from-emerald-900 to-teal-950 text-white p-4 rounded-xl border border-emerald-800 shadow-sm flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] bg-emerald-400/20 text-emerald-200 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                  AO II Auto-Reflected Tranche
+                </span>
+                <span className="text-xs text-emerald-300">&bull; Governed by Division Superadmin</span>
+              </div>
+              <p className="text-xs text-emerald-100 mt-0.5">
+                This official Salary Tranche is deployed by the Division Superadmin and automatically reflected in your station payroll, Form 48 DTR computations, and NOSI 3-year step increments.
+              </p>
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-200 bg-emerald-950/60 px-3 py-1.5 rounded-lg border border-emerald-800">
+            <Lock className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Central Managed</span>
+          </div>
+        </div>
+      )}
+
       {/* Module Banner & Action Bar */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -243,11 +347,11 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Customizable statutory compensation schedule for Salary Grades 1 to 33. Download the official standardized template or upload your division's approved DBM National Budget Circular (NBC) / LGU schedule.
+              Customizable statutory compensation schedule for Salary Grades 1 to 33. {isSuperadmin ? 'Upload or select official circular schedules to publish division-wide.' : 'View official statutory salary rates and correlate with active station staffing.'}
             </p>
           </div>
 
-          {/* Action Buttons: Download Template & Upload */}
+          {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => downloadSalaryTrancheTemplate()}
@@ -258,19 +362,21 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
               <span>Download Template (.xlsx)</span>
             </button>
 
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="px-3.5 py-2 rounded-lg text-xs font-bold bg-[#1e3a8a] text-white hover:bg-blue-900 transition shadow-sm flex items-center gap-2"
-              title="Upload populated Excel or CSV spreadsheet"
-            >
-              {isUploading ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-white" />
-              ) : (
-                <UploadCloud className="w-4 h-4 text-white" />
-              )}
-              <span>{isTrancheActive ? 'Replace Schedule (.xlsx)' : 'Upload Tranche (.xlsx)'}</span>
-            </button>
+            {isSuperadmin && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="px-3.5 py-2 rounded-lg text-xs font-bold bg-[#1e3a8a] text-white hover:bg-blue-900 transition shadow-sm flex items-center gap-2"
+                title="Upload populated Excel or CSV spreadsheet and deploy to AO II roles"
+              >
+                {isUploading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <UploadCloud className="w-4 h-4 text-white" />
+                )}
+                <span>{isTrancheActive ? 'Upload & Deploy New (.xlsx)' : 'Upload & Deploy Tranche (.xlsx)'}</span>
+              </button>
+            )}
 
             {isTrancheActive && (
               <>
@@ -283,14 +389,16 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
                   <span>Export Active (.xlsx)</span>
                 </button>
 
-                <button
-                  onClick={handleClearTranche}
-                  className="px-3 py-2 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition shadow-sm flex items-center gap-1.5"
-                  title="Remove tranche data and return to blank template"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                  <span>Clear Data</span>
-                </button>
+                {isSuperadmin && (
+                  <button
+                    onClick={handleClearTranche}
+                    className="px-3 py-2 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition shadow-sm flex items-center gap-1.5"
+                    title="Remove tranche data and return to blank template"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Clear Data</span>
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -298,16 +406,21 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
 
         {/* Tranche Status Badge Bar */}
         <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-slate-500">Status:</span>
             {isTrancheActive ? (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 font-bold border border-emerald-300">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                 <span>
                   Active Schedule: {activeTranche?.title || 'Custom Upload'}
+                  {activeTranche?.updatedBy && (
+                    <span className="font-normal text-emerald-800 ml-1">
+                      &bull; Deployed by {activeTranche.updatedBy}
+                    </span>
+                  )}
                   {activeTranche?.uploadedAt && (
                     <span className="font-normal text-emerald-700 ml-1">
-                      (Uploaded {new Date(activeTranche.uploadedAt).toLocaleDateString()})
+                      ({new Date(activeTranche.uploadedAt).toLocaleDateString()})
                     </span>
                   )}
                 </span>
@@ -315,7 +428,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
             ) : (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-300">
                 <AlertCircle className="w-3.5 h-3.5 text-amber-700" />
-                <span>No Salary Tranche Data Uploaded (Template Mode)</span>
+                <span>{isSuperadmin ? 'No Salary Tranche Deployed — Click "Deploy 2026 SSL Tranche" above' : 'Tranche Pending Superadmin Deployment'}</span>
               </span>
             )}
           </div>
@@ -323,7 +436,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
           {personnelList.length > 0 && (
             <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-slate-500" />
-              <span>Station Roster: {personnelList.length} personnel across {activeGrades.length} Salary Grades</span>
+              <span>{isSuperadmin ? 'Division Roster:' : 'Station Roster:'} {personnelList.length} personnel across {activeGrades.length} Salary Grades</span>
             </span>
           )}
         </div>
