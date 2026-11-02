@@ -352,7 +352,6 @@ export function downloadSalaryTrancheTemplate(filename = 'DepEd_Salary_Tranche_T
   // Sheet 1: Data Matrix
   const matrixHeaders = [
     'Salary Grade',
-    'Benchmark DepEd Position',
     'Step 1',
     'Step 2',
     'Step 3',
@@ -366,17 +365,15 @@ export function downloadSalaryTrancheTemplate(filename = 'DepEd_Salary_Tranche_T
   const dataRows: (string | number)[][] = [matrixHeaders];
 
   for (let sg = 1; sg <= 33; sg++) {
-    const pos = BENCHMARK_POSITIONS[sg]?.join(' / ') || `Salary Grade ${sg}`;
     // Empty cells for steps 1-8 so user can enter official figures
-    dataRows.push([sg, pos, '', '', '', '', '', '', '', '']);
+    dataRows.push([sg, '', '', '', '', '', '', '', '']);
   }
 
   const worksheet = XLSX.utils.aoa_to_sheet(dataRows);
 
   // Set column widths
   worksheet['!cols'] = [
-    { wch: 14 }, // Salary Grade
-    { wch: 45 }, // Benchmark Position
+    { wch: 16 }, // Salary Grade
     { wch: 14 }, // Step 1
     { wch: 14 }, // Step 2
     { wch: 14 }, // Step 3
@@ -399,9 +396,8 @@ export function downloadSalaryTrancheTemplate(filename = 'DepEd_Salary_Tranche_T
     ['2. The "Salary Grade" column must contain numbers 1 through 33.'],
     ['3. Fill in the monthly statutory salary rates in Philippine Pesos (PHP) for Steps 1 through 8.'],
     ['4. Values can be entered as plain numbers (e.g. 30227) or formatted with commas (e.g. 30,227.00).'],
-    ['5. Benchmark positions are for reference and will not affect salary parsing if modified.'],
-    ['6. Save the file and upload it directly into the AOII Portal via the "Upload Salary Tranche" button.'],
-    ['7. Once uploaded, the system will immediately recalculate Form 48, NOSI, and payroll analytics.'],
+    ['5. Save the file and upload it directly into the AOII Portal via the "Upload Salary Tranche" button.'],
+    ['6. Once uploaded, the system will immediately recalculate Form 48, NOSI, and payroll analytics.'],
     [''],
     ['REFERENCE: Department of Budget and Management (DBM) National Budget Circular (NBC) / SSL Tranche Schedule'],
   ];
@@ -424,7 +420,6 @@ export function exportActiveSalaryTrancheExcel(filename = 'Active_Salary_Tranche
 
   const matrixHeaders = [
     'Salary Grade',
-    'Benchmark DepEd Position',
     'Step 1',
     'Step 2',
     'Step 3',
@@ -438,11 +433,9 @@ export function exportActiveSalaryTrancheExcel(filename = 'Active_Salary_Tranche
   const dataRows: (string | number)[][] = [matrixHeaders];
 
   for (let sg = 1; sg <= 33; sg++) {
-    const pos = BENCHMARK_POSITIONS[sg]?.join(' / ') || `Salary Grade ${sg}`;
     const steps = matrix[sg] || [0, 0, 0, 0, 0, 0, 0, 0];
     dataRows.push([
       sg,
-      pos,
       steps[0] || 0,
       steps[1] || 0,
       steps[2] || 0,
@@ -456,8 +449,7 @@ export function exportActiveSalaryTrancheExcel(filename = 'Active_Salary_Tranche
 
   const worksheet = XLSX.utils.aoa_to_sheet(dataRows);
   worksheet['!cols'] = [
-    { wch: 14 },
-    { wch: 45 },
+    { wch: 16 },
     { wch: 14 },
     { wch: 14 },
     { wch: 14 },

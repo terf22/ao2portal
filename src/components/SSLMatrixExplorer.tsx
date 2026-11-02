@@ -127,11 +127,17 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
   const filteredMatrix = useMemo(() => {
     return matrixRows.filter((row) => {
       const matchGrade = filterGrade === 'ALL' || row.salaryGrade === filterGrade;
+      const term = searchTerm.trim().toLowerCase();
       const matchSearch =
-        searchTerm === '' ||
-        String(row.salaryGrade).includes(searchTerm) ||
-        row.benchmarkPositions.some((pos) =>
-          pos.toLowerCase().includes(searchTerm.toLowerCase())
+        term === '' ||
+        String(row.salaryGrade).includes(term) ||
+        `sg ${row.salaryGrade}`.includes(term) ||
+        `grade ${row.salaryGrade}`.includes(term) ||
+        (staffByGrade.get(row.salaryGrade) || []).some(
+          (p) =>
+            p.lastName?.toLowerCase().includes(term) ||
+            p.firstName?.toLowerCase().includes(term) ||
+            p.positionTitle?.toLowerCase().includes(term)
         );
       const matchStation = !showStationGradesOnly || staffByGrade.has(row.salaryGrade);
       return matchGrade && matchSearch && matchStation;
@@ -576,25 +582,25 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
             onClick={() => applyPreset(11, 1, 11, 2)}
             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] border border-slate-700 transition"
           >
-            Teacher I (Step 1 → Step 2)
+            SG 11 (Step 1 → Step 2)
           </button>
           <button
             onClick={() => applyPreset(11, 1, 12, 1)}
             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] border border-slate-700 transition"
           >
-            Teacher I → Teacher II (SG 11 → SG 12)
+            SG 11 → SG 12
           </button>
           <button
             onClick={() => applyPreset(11, 1, 13, 1)}
             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] border border-slate-700 transition"
           >
-            Teacher I → Teacher III (SG 11 → SG 13)
+            SG 11 → SG 13
           </button>
           <button
             onClick={() => applyPreset(13, 1, 18, 1)}
             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] border border-slate-700 transition"
           >
-            Teacher III → Master Teacher I (SG 13 → SG 18)
+            SG 13 → SG 18
           </button>
         </div>
 
@@ -603,7 +609,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
           {/* Point A */}
           <div className="md:col-span-4 bg-slate-800/80 p-4 rounded-xl border border-slate-700">
             <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold block mb-2">
-              Point A: Initial Position / Base Rate
+              Point A: Baseline Salary Grade &amp; Step
             </span>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -654,7 +660,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
           {/* Point B */}
           <div className="md:col-span-4 bg-slate-800/80 p-4 rounded-xl border border-slate-700">
             <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold block mb-2">
-              Point B: Target Position / Next Increment
+              Point B: Target Salary Grade &amp; Step
             </span>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -757,7 +763,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Search position or grade..."
+                placeholder="Search salary grade (e.g. 11)..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:ring-1 focus:ring-blue-600 focus:outline-none w-56 text-slate-900"
@@ -793,8 +799,7 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
-                <th className="p-3 w-16 text-center">SG</th>
-                <th className="p-3 min-w-[200px]">Benchmark DepEd Positions</th>
+                <th className="p-3 w-32 text-center font-bold">Salary Grade</th>
                 {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
                   <th key={s} className="p-3 text-right font-mono min-w-[95px]">
                     Step {s}
@@ -819,32 +824,16 @@ export const SSLMatrixExplorer: React.FC<SSLMatrixExplorerProps> = ({
                         : ''
                     }`}
                   >
-                    <td className="p-3 text-center font-bold text-slate-900 font-mono">
-                      <div className="flex flex-col items-center">
-                        <span>{row.salaryGrade}</span>
+                    <td className="p-3 text-center font-bold text-slate-900 font-mono whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className="text-xs font-black text-slate-800">Grade {row.salaryGrade}</span>
                         {staffAtGrade.length > 0 && (
-                          <span className="mt-0.5 px-1 py-0.2 rounded text-[9px] font-bold bg-emerald-600 text-white leading-tight">
-                            {staffAtGrade.length}p
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex flex-wrap items-center gap-1">
-                        {row.benchmarkPositions.map((pos, pIdx) => (
                           <span
-                            key={pIdx}
-                            className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[10.5px] border border-slate-200"
+                            className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-0.5"
+                            title={`${staffAtGrade.length} personnel at this grade: ${staffAtGrade.map((p) => p.lastName).join(', ')}`}
                           >
-                            {pos}
-                          </span>
-                        ))}
-                        {staffAtGrade.length > 0 && (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 text-[10.5px] font-bold border border-emerald-300 flex items-center gap-1">
-                            <Users className="w-3 h-3 text-emerald-700" />
-                            <span>
-                              {staffAtGrade.length} Detected ({staffAtGrade.map((p) => p.lastName).join(', ')})
-                            </span>
+                            <Users className="w-2.5 h-2.5 text-emerald-700" />
+                            <span>{staffAtGrade.length}</span>
                           </span>
                         )}
                       </div>
